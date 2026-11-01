@@ -25,24 +25,32 @@ member, so items build on each other's changes in drain order.
      `$WORKTREE` and the path must be a worktree of this repository; reuse it
      and go to step 4. Hard-fail on a mismatch instead of overwriting it.
    - If anything else already exists at that path, fail closed.
-   - Otherwise resolve the remote default branch (do not hardcode `main`). Read
-     the local ref first, and only touch the network if it is missing:
+   - Otherwise resolve the base branch: base_branch `{{base_branch}}` when it
+     is set, else the remote default branch (do not hardcode `main`). For the
+     default, read the local ref first, and only touch the network if it is
+     missing:
 
      ```sh
-     DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-     if [ -z "$DEFAULT_BRANCH" ]; then
-       git remote set-head origin --auto >/dev/null 2>&1 || true
+     BASE_BRANCH="{{base_branch}}"
+     if [ -z "$BASE_BRANCH" ]; then
        DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+       if [ -z "$DEFAULT_BRANCH" ]; then
+         git remote set-head origin --auto >/dev/null 2>&1 || true
+         DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+       fi
+       BASE_BRANCH=$DEFAULT_BRANCH
      fi
      ```
 
-     If it is still empty, fail closed. Never fall back to the launcher's local
-     `HEAD`, which may be behind `origin`.
-   - Fetch it so the base is current: `git fetch --prune origin "$DEFAULT_BRANCH"`.
+     If `BASE_BRANCH` is still empty, fail closed.
+     Never fall back to the launcher's local `HEAD`, which may be behind `origin`.
+   - Fetch it so the base is current: `git fetch --prune origin "$BASE_BRANCH"`.
+     If base_branch was set and origin has no such branch, fail closed; never
+     substitute the remote default branch for an explicit base.
    - Create the worktree detached at the freshly fetched tip:
-     `git worktree add "$WORKTREE" --detach "origin/$DEFAULT_BRANCH"`.
+     `git worktree add "$WORKTREE" --detach "origin/$BASE_BRANCH"`.
 4. Record the worktree and its base on the root:
-   `gc bd update <root-bead-id> --set-metadata gc.shared_work_dir=$WORKTREE --set-metadata gc.shared_work_base=<base commit sha>`.
+   `gc bd update <root-bead-id> --set-metadata gc.shared_work_dir=$WORKTREE --set-metadata gc.shared_work_base=<base commit sha> --set-metadata gc.shared_work_base_branch=$BASE_BRANCH`.
 5. On every member, persist the absolute path:
    `gc bd update <member-id> --set-metadata work_dir=$WORKTREE`.
    If a member already records a different `work_dir` that still exists, fail
