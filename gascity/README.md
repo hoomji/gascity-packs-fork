@@ -144,6 +144,7 @@ launch or pin them in a rig's `formula_vars`:
 | `drain_policy` | `separate` | `separate` runs implementation beads in parallel worker sessions; `same-session` runs them serially in one shared session. |
 | `implementation_target` | `gc.implementation-worker` | The rig role that implements each work item. |
 | `push` / `open_pr` | `false` | Allow the publish stage to push and open a PR after all checks pass. |
+| `base_branch` | (empty) | Branch every implementation worktree is cut from and every PR targets. Empty means the remote default branch. An explicit base that origin lacks fails the run rather than falling back. |
 | `max_iterations` | `10` | Bound on implementation/review fix attempts. |
 
 When variables are not enough, every stage prompt can be replaced by dropping
@@ -173,6 +174,11 @@ the core-injected reserved convoy target; they do not declare `issue`,
 `bead_id`, or `convoy_id` variables. `drain_policy=separate` is the standalone
 default. Use `same-session` only when preserving one shared worktree and
 conversation is explicitly desired and core shared drain support is available.
+Core shared drain creates no worktree, so every formula with a shared drain
+runs a `prepare-shared-worktree` step first: it cuts one worktree for the
+convoy at `worktrees/<convoy-id>` and records it as `work_dir` on every member,
+which is where each shared item reads it. An override that replaces the drain
+step must keep `needs = ["prepare-shared-worktree"]`.
 
 The pack ships its city-scoped claim command alongside formulas, plus
 providerless rig role agents under `gascity/roles`. Standalone use requires
@@ -211,7 +217,8 @@ stable stage sequence that concrete build methodology packs can override:
 
 ```text
 prepare -> requirements -> plan -> plan-review -> decompose ->
-implement | implement-same-session -> review -> finalize -> publish
+implement | (prepare-shared-worktree -> implement-same-session) ->
+review -> finalize -> publish
 ```
 
 `build-base` is internal and should not be launched directly. Use
@@ -680,8 +687,8 @@ Stable basic override:
 `assets/workflows/implement/prepare.md`
 
 Stable advanced steps:
-`implement` steps `prepare`, `drain-separate`, `drain-same-session`,
-`wait-for-drain`, `summarize`
+`implement` steps `prepare`, `drain-separate`, `prepare-shared-worktree`,
+`drain-same-session`, `wait-for-drain`, `summarize`
 
 Basic example: add local preflight checks before draining work.
 
@@ -707,7 +714,7 @@ lane remains:
 [[steps]]
 id = "drain-same-session"
 title = "Drain implementation in one shared session"
-needs = ["prepare"]
+needs = ["prepare-shared-worktree"]
 metadata = { "gc.run_target" = "gc.implementation-worker" }
 description_file = "../assets/workflows/implement/drain-same-session.md"
 

@@ -11,6 +11,7 @@ Launch inputs:
 - drain_policy: {{drain_policy}}
 - implementation_target: {{implementation_target}}
 - summary_path: {{summary_path}} (empty means use the default implementation summary)
+- base_branch: {{base_branch}} (empty means the remote default branch)
 - push: {{push}}
 - open_pr: {{open_pr}}
 """
@@ -49,6 +50,10 @@ default = "false"
 description = "Set true to allow publish PR creation after direct implementation succeeds."
 default = "false"
 
+[vars.base_branch]
+description = "Branch to cut implementation worktrees from and to target when publishing. Empty means the remote default branch. Set it per rig with formula_vars."
+default = ""
+
 [[steps]]
 id = "prepare"
 title = "Validate implementation convoy"
@@ -69,9 +74,17 @@ formula = "do-work"
 member_access = "exclusive"
 
 [[steps]]
+id = "prepare-shared-worktree"
+title = "Cut the shared drain worktree"
+needs = ["prepare"]
+condition = "{{drain_policy}} == same-session"
+metadata = { "gc.run_target" = "gc.run-operator" }
+description_file = "../assets/workflows/implement/prepare-shared-worktree.md"
+
+[[steps]]
 id = "drain-same-session"
 title = "Drain implementation convoy in one shared session"
-needs = ["prepare"]
+needs = ["prepare-shared-worktree"]
 condition = "{{drain_policy}} == same-session"
 metadata = { "gc.run_target" = "{{implementation_target}}" }
 description_file = "../assets/workflows/implement/drain-same-session.md"
