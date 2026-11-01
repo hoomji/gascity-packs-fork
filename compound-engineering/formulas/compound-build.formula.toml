@@ -104,7 +104,7 @@ member_access = "exclusive"
 [[steps]]
 id = "implement-same-session"
 title = "Drain Compound Engineering work in one shared session"
-needs = ["decompose"]
+needs = ["prepare-shared-worktree"]
 condition = "{{drain_policy}} == same-session"
 metadata = { "gc.run_target" = "{{implementation_target}}" }
 description_file = "../assets/workflows/compound-build/implement-same-session.md"

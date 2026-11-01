@@ -69,9 +69,17 @@ formula = "do-work"
 member_access = "exclusive"
 
 [[steps]]
+id = "prepare-shared-worktree"
+title = "Cut the shared drain worktree"
+needs = ["prepare"]
+condition = "{{drain_policy}} == same-session"
+metadata = { "gc.run_target" = "gc.run-operator" }
+description_file = "../assets/workflows/implement/prepare-shared-worktree.md"
+
+[[steps]]
 id = "drain-same-session"
 title = "Drain implementation convoy in one shared session"
-needs = ["prepare"]
+needs = ["prepare-shared-worktree"]
 condition = "{{drain_policy}} == same-session"
 metadata = { "gc.run_target" = "{{implementation_target}}" }
 description_file = "../assets/workflows/implement/drain-same-session.md"

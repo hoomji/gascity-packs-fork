@@ -87,6 +87,7 @@ BUILD_BASE_STEPS = [
     "plan-review",
     "decompose",
     "implement",
+    "prepare-shared-worktree",
     "implement-same-session",
     "summarize-implementation",
     "review",
@@ -105,6 +106,7 @@ BUILD_FROM_REVIEW_STEPS = {
 BUILD_FROM_CONVOY_STEPS = BUILD_FROM_REVIEW_STEPS | {
     "prepare-convoy",
     "implement",
+    "prepare-shared-worktree",
     "implement-same-session",
 }
 
@@ -1748,7 +1750,10 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(steps["implement"]["drain"]["context"], "separate")
         self.assertEqual(steps["implement"]["drain"]["formula"], "do-work")
         self.assertEqual(steps["implement"]["drain"]["member_access"], "exclusive")
-        self.assertEqual(steps["implement-same-session"]["needs"], ["prepare-convoy"])
+        self.assertEqual(steps["prepare-shared-worktree"]["needs"], ["prepare-convoy"])
+        self.assertEqual(steps["prepare-shared-worktree"]["condition"], "{{drain_policy}} == same-session")
+        self.assertEqual(steps["prepare-shared-worktree"]["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertEqual(steps["implement-same-session"]["needs"], ["prepare-shared-worktree"])
         self.assertEqual(steps["implement-same-session"]["condition"], "{{drain_policy}} == same-session")
         self.assertEqual(steps["implement-same-session"]["metadata"]["gc.run_target"], "{{implementation_target}}")
         self.assertEqual(steps["implement-same-session"]["drain"]["context"], "shared")
@@ -1856,7 +1861,8 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(steps["decompose"]["needs"], ["prepare-decompose"])
         self.assertEqual(steps["prepare-convoy"]["needs"], ["decompose"])
         self.assertEqual(steps["implement"]["needs"], ["prepare-convoy"])
-        self.assertEqual(steps["implement-same-session"]["needs"], ["prepare-convoy"])
+        self.assertEqual(steps["prepare-shared-worktree"]["needs"], ["prepare-convoy"])
+        self.assertEqual(steps["implement-same-session"]["needs"], ["prepare-shared-worktree"])
         self.assertEqual(steps["prepare-review"]["needs"], ["implement", "implement-same-session"])
         self.assertEqual(steps["review"]["needs"], ["prepare-review"])
         self.assertEqual(steps["repair-review"]["needs"], ["review"])
@@ -2321,7 +2327,7 @@ class FormulaAssetTests(unittest.TestCase):
                     self.assertEqual(step_by_id["implement"]["needs"], ["implementation-readiness"])
                     self.assertEqual(
                         step_by_id["implement-same-session"]["needs"],
-                        ["implementation-readiness"],
+                        ["implementation-readiness", "prepare-shared-worktree"],
                     )
                 self.assertEqual(step_by_id["implement"]["metadata"]["gc.run_target"], "{{implementation_target}}")
                 self.assertNotIn("expand", step_by_id["implement"])
@@ -3555,12 +3561,25 @@ class FormulaAssetTests(unittest.TestCase):
         step_ids = [step["id"] for step in data["steps"]]
         self.assertEqual(
             step_ids,
-            ["prepare", "drain-separate", "drain-same-session", "wait-for-drain", "summarize", "publish"],
+            [
+                "prepare",
+                "drain-separate",
+                "prepare-shared-worktree",
+                "drain-same-session",
+                "wait-for-drain",
+                "summarize",
+                "publish",
+            ],
         )
 
         separate = data["steps"][1]
-        same = data["steps"][2]
+        shared_worktree = data["steps"][2]
+        same = data["steps"][3]
         self.assertEqual(data["steps"][0]["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertEqual(shared_worktree["needs"], ["prepare"])
+        self.assertEqual(shared_worktree["condition"], "{{drain_policy}} == same-session")
+        self.assertEqual(shared_worktree["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertEqual(same["needs"], ["prepare-shared-worktree"])
         self.assertEqual(separate["metadata"]["gc.run_target"], "{{implementation_target}}")
         self.assertEqual(separate["condition"], "{{drain_policy}} == separate")
         self.assertEqual(separate["drain"]["context"], "separate")
@@ -3573,13 +3592,13 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(same["drain"]["member_access"], "exclusive")
         self.assertTrue(same["drain"]["item"]["single_lane"])
         self.assertEqual(same["drain"]["on_item_failure"], "skip_remaining")
-        self.assertEqual(data["steps"][3]["metadata"]["gc.run_target"], "gc.run-operator")
         self.assertEqual(data["steps"][4]["metadata"]["gc.run_target"], "gc.run-operator")
-        self.assertEqual(data["steps"][5]["metadata"]["gc.run_target"], "gc.publisher")
-        self.assertEqual(data["steps"][5]["needs"], ["summarize"])
-        summarize = node_description(root, data["steps"][4])
+        self.assertEqual(data["steps"][5]["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertEqual(data["steps"][6]["metadata"]["gc.run_target"], "gc.publisher")
+        self.assertEqual(data["steps"][6]["needs"], ["summarize"])
+        summarize = node_description(root, data["steps"][5])
         self.assertIn("gc.implementation.summary_path", summarize)
-        wait = node_description(root, data["steps"][3])
+        wait = node_description(root, data["steps"][4])
         for fragment in (
             "Wait only on the core drain control bead",
             "gc.drain_manifest.v1",
@@ -3602,9 +3621,87 @@ class FormulaAssetTests(unittest.TestCase):
 
         helper = tomllib.loads((root / "formulas" / "same-session-implement.formula.toml").read_text(encoding="utf-8"))
         self.assertEqual(helper["vars"]["implementation_target"]["default"], "gc.implementation-worker")
-        self.assertEqual(helper["steps"][0]["metadata"]["gc.run_target"], "{{implementation_target}}")
-        self.assertEqual(helper["steps"][0]["drain"]["formula"], "do-work-item")
-        self.assertEqual(helper["steps"][0]["drain"]["member_access"], "exclusive")
+        self.assertEqual(
+            [step["id"] for step in helper["steps"]],
+            ["prepare-shared-worktree", "shared-drain"],
+        )
+        self.assertEqual(helper["steps"][0]["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertEqual(helper["steps"][1]["needs"], ["prepare-shared-worktree"])
+        self.assertEqual(helper["steps"][1]["metadata"]["gc.run_target"], "{{implementation_target}}")
+        self.assertEqual(helper["steps"][1]["drain"]["formula"], "do-work-item")
+        self.assertEqual(helper["steps"][1]["drain"]["member_access"], "exclusive")
+
+    def test_every_shared_drain_runs_after_its_shared_worktree_exists(self) -> None:
+        # Core shared drain creates no worktree, and every shared item formula
+        # (do-work-item and the derived *-item overrides) reads its worktree
+        # from the source anchor's work_dir. A shared drain step must therefore
+        # depend, directly or through its needs chain, on a step that cuts that
+        # worktree and records it on every member. Derived overrides replace
+        # the drain step whole (formula-spec-v2 section 1.7), so check every
+        # resolved formula in every pack that imports gascity.
+        gascity_root = pathlib.Path(__file__).resolve().parents[1]
+        packs_root = gascity_root.parent
+        checked = 0
+        for pack_name in ["gascity", *sorted(THIRD_PARTY_BUILD_PACKS)]:
+            pack_root = packs_root / pack_name
+            dirs = [gascity_root / "formulas"]
+            if pack_root != gascity_root:
+                dirs.append(pack_root / "formulas")
+            for formula_path in sorted((pack_root / "formulas").glob("*.formula.toml")):
+                name = formula_path.name.removesuffix(".formula.toml")
+                resolved = resolve_formula_from_dirs(dirs, name)
+                steps = {step["id"]: step for step in resolved.get("steps", [])}
+                for step in steps.values():
+                    if (step.get("drain") or {}).get("context") != "shared":
+                        continue
+                    checked += 1
+                    ancestors: set[str] = set()
+                    pending = list(step.get("needs", []))
+                    while pending:
+                        need = pending.pop()
+                        if need in ancestors or need not in steps:
+                            continue
+                        ancestors.add(need)
+                        pending.extend(steps[need].get("needs", []))
+                    with self.subTest(pack=pack_name, formula=name, step=step["id"]):
+                        self.assertIn(
+                            "prepare-shared-worktree",
+                            ancestors,
+                            f"{pack_name}/{name}.{step['id']} drains shared items "
+                            "before any step creates their shared worktree",
+                        )
+                        worktree_step = steps["prepare-shared-worktree"]
+                        self.assertEqual(worktree_step.get("condition"), step.get("condition"))
+                        self.assertEqual(worktree_step["metadata"]["gc.run_target"], "gc.run-operator")
+        self.assertGreaterEqual(checked, 13)
+
+    def test_shared_worktree_prompts_record_work_dir_on_every_member(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        bodies = {}
+        for formula in ("implement", "build-base", "build-from-convoy-base", "same-session-implement"):
+            text = (root / "assets" / "workflows" / formula / "prepare-shared-worktree.md").read_text(
+                encoding="utf-8"
+            )
+            header, _, body = text.partition("\n\n")
+            with self.subTest(formula=formula):
+                self.assertIn(f"`{formula}`", header)
+                for fragment in (
+                    "infrastructure setup only",
+                    "gc.root_bead_id",
+                    "gc.input_convoy_id",
+                    "gc convoy status <convoy-id> --json",
+                    "$(pwd)/worktrees/<convoy-id>",
+                    "refs/remotes/origin/HEAD",
+                    "Never fall back to the launcher's local",
+                    "--detach",
+                    "gc.shared_work_dir",
+                    "--set-metadata work_dir=$WORKTREE",
+                    "Never write\n   `work_dir` on a convoy",
+                    "gc.outcome=pass",
+                ):
+                    self.assertIn(fragment, body)
+            bodies[formula] = body
+        self.assertEqual(len(set(bodies.values())), 1, "shared-worktree prompt copies drifted apart")
 
     def test_implement_prepare_is_validation_only(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
