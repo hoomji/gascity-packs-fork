@@ -72,7 +72,7 @@ per-item summary paths, changed files, first verification commands, final proof
 commands, observed pass/fail results, and remaining risks. Keep the root
 summary concise, but do not omit accepted requirement IDs.
 
-Before closing this step, read the launcher rig root from the workflow root bead's `gc.work_dir`, then run the same validator locally from that launcher rig root. The validator is the script recorded as `gc.check_path` on the validation loop control bead (the dependent of this step bead whose `gc.kind` is `ralph`); Gas City resolves it to this pack's own `build-artifact-valid.sh` asset, so nothing has to be copied into the rig:
+Before closing this step, read the launcher rig root from the workflow root bead's `gc.work_dir` (when the root has none, use `$GC_RIG_ROOT`, which every rig agent session exports; never fail for a missing root `gc.work_dir` alone), then run the same validator locally from that launcher rig root. The validator is the script recorded as `gc.check_path` on the validation loop control bead (the dependent of this step bead whose `gc.kind` is `ralph`); Gas City resolves it to this pack's own `build-artifact-valid.sh` asset, so nothing has to be copied into the rig:
 
 `GC_BEAD_ID=<claimed-step-id> GC_RIG_ROOT=<launcher-rig-root> "<gc.check_path>"`
 
