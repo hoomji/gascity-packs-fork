@@ -5399,6 +5399,53 @@ description = "Override sink that writes the base triage report contract."
         self.assertIn("no artifact path recorded", result.stderr)
         self.assertIn("gc.build.requirements_path,gc.var.requirements_path", result.stderr)
 
+    def test_build_artifact_check_falls_back_to_the_attempt_bead_path(self) -> None:
+        # A worker may update only the bead it claimed (gc-role-worker template),
+        # so it records the artifact path on its attempt bead, not the root.
+        # The gate reads the root first, then the attempt bead it was given.
+        with tempfile.TemporaryDirectory() as artifact_dir:
+            artifact = pathlib.Path(artifact_dir) / "requirements.md"
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            attempt = (
+                '[{"id": "attempt", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path,gc.var.requirements_path", '
+                f'"gc.build.requirements_path": "{artifact}"'
+                "}}]"
+            )
+            root_bead = '[{"id": "root", "metadata": {}}]'
+            result = self._run_build_artifact_check(
+                {"attempt": attempt, "root": root_bead}, "attempt"
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("build artifact valid", result.stdout)
+
+    def test_build_artifact_check_prefers_the_root_path_over_the_attempt_bead(self) -> None:
+        with tempfile.TemporaryDirectory() as artifact_dir:
+            good = pathlib.Path(artifact_dir) / "requirements.md"
+            good.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            missing = pathlib.Path(artifact_dir) / "absent.md"
+            attempt = (
+                '[{"id": "attempt", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path", '
+                f'"gc.build.requirements_path": "{missing}"'
+                "}}]"
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                f'"gc.build.requirements_path": "{good}"'
+                "}}]"
+            )
+            result = self._run_build_artifact_check(
+                {"attempt": attempt, "root": root_bead}, "attempt"
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_review_report_prompt_writes_to_the_rig_root(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         prompt = (root / "assets" / "workflows" / "review" / "write-report.md").read_text(
