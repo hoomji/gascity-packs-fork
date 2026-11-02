@@ -72,17 +72,23 @@ fi
 ARTIFACT_PATH=""
 RESOLVED_KEY=""
 IFS=',' read -r -a KEYS <<<"$PATH_KEYS"
-for key in "${KEYS[@]}"; do
-  key="$(printf '%s' "$key" | tr -d '[:space:]')"
-  [ -n "$key" ] || continue
-  value="$(metadata_value "$ROOT_JSON" "$key")"
-  if [ -n "$value" ]; then
-    ARTIFACT_PATH="$value"
-    RESOLVED_KEY="$key"
-    break
-  fi
+# The workflow root is authoritative. A worker may update only the bead it
+# claimed (template-fragments/gc-role-worker.template.md), so when the root has
+# no path, read the same keys from $GC_BEAD_ID: the attempt bead the dispatcher
+# runs this gate for (internal/dispatch/ralph.go runRalphCheck).
+for source_json in "$ROOT_JSON" "$SHOW_JSON"; do
+  for key in "${KEYS[@]}"; do
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    [ -n "$key" ] || continue
+    value="$(metadata_value "$source_json" "$key")"
+    if [ -n "$value" ]; then
+      ARTIFACT_PATH="$value"
+      RESOLVED_KEY="$key"
+      break 2
+    fi
+  done
 done
-[ -n "$ARTIFACT_PATH" ] || fail "no artifact path recorded on workflow root ${ROOT_ID:-$BEAD_ID}; tried metadata keys: $PATH_KEYS. The producing stage must record the resolved artifact path before closing."
+[ -n "$ARTIFACT_PATH" ] || fail "no artifact path recorded on workflow root ${ROOT_ID:-$BEAD_ID} or on $BEAD_ID; tried metadata keys: $PATH_KEYS. The producing stage must record the resolved artifact path before closing."
 
 case "$ARTIFACT_PATH" in
   /*) ;;

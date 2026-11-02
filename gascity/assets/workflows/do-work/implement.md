@@ -50,8 +50,9 @@ The `## Verification` section must include both the first verification command
 and the final proof command, with the observed pass/fail result.
 
 Write the summary as a `gc.build.implementation-summary.v1` artifact and record
-its absolute path on the workflow root bead as `gc.implementation.summary_path`
-before closing.
+its absolute path as `gc.implementation.summary_path` on the claimed step bead
+before closing. Update only the claimed bead: the artifact gate reads the path
+from the workflow root first, then from the claimed step.
 Include a Markdown coverage table. The validator only recognizes a table with
 an `ID` column and a `Status` column. Use this shape:
 
