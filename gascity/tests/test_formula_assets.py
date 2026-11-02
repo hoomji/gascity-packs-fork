@@ -2250,6 +2250,29 @@ class FormulaAssetTests(unittest.TestCase):
 
         self.assertIn("do not patch the launcher root", apply)
         self.assertIn("source anchor and implementation\nworktree", synthesize)
+    def test_validator_rig_root_falls_back_to_gc_rig_root(self) -> None:
+        # A do-work root may carry no gc.work_dir (prepare-worktree stamps only the
+        # source anchor); workers then failed closed (hoppy-city hc-amld0, hc-c4236).
+        root = pathlib.Path(__file__).resolve().parents[1]
+        prompts = [
+            p for p in (root / "assets").rglob("*.md")
+            if "read the launcher rig root from the workflow root bead's `gc.work_dir`" in p.read_text(encoding="utf-8")
+        ]
+        self.assertGreaterEqual(len(prompts), 6)
+        for p in prompts:
+            with self.subTest(prompt=str(p.relative_to(root))):
+                text = p.read_text(encoding="utf-8")
+                self.assertIn("use `$GC_RIG_ROOT`", text)
+                self.assertIn("never fail for a missing root `gc.work_dir` alone", text)
+
+    def test_do_work_summary_path_is_recorded_on_the_claimed_step(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for rel in ("assets/workflows/do-work/implement.md", "assets/workflows/do-work-item/implement-item.md"):
+            with self.subTest(prompt=rel):
+                text = (root / rel).read_text(encoding="utf-8")
+                self.assertNotIn("its absolute path on the workflow root bead as `gc.implementation.summary_path`", text)
+                self.assertIn("`gc.implementation.summary_path` on the claimed step bead", text)
+
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         path_contracts = {
