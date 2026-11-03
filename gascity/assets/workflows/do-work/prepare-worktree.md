@@ -2,6 +2,14 @@
 Resolve and publish the isolated worktree for this item. This is infrastructure
 setup only. Do not edit source files in the launcher checkout.
 
+**This step writes exactly three beads, all named below:** `gc.source_anchor_id` on the
+do-work root (step 2), `work_dir` on the source anchor (step 5), and the close of your own
+claimed step bead. These two named writes are this step's required lifecycle output: every
+later step reads them, and without them implement and close-source-anchor fail
+`worktree_unavailable`.
+So nothing here conflicts with "update or close only your claimed bead": follow every step
+below. Write no other bead.
+
 1. Read current step bead metadata and get `gc.root_bead_id`; hard-fail if it is
    missing. Read that do-work root with `gc bd show <root-bead-id> --json`. If
    `gc bd show --json` returns a one-element list, unwrap the first element before
