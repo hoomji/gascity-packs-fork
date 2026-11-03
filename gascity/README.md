@@ -999,6 +999,12 @@ with `verdict: pass|fail`. Validate with:
 python3 <pack-root>/assets/scripts/validate_verdict_report.py report.md --kind review
 ```
 
+`github-pr-review` reads the report the generic `review` formula writes, which is
+validated as `gc.build.review.v1`. `github_reports.py review-outcome` accepts both
+schemas: on `gc.build.review.v1` it uses `verdict`/`severity` when present (they must
+agree with `status`), else maps `status` (`approved` -> approve, `changes_required`
+-> request_changes, `blocked` -> block). Any other status is not a finished review.
+
 ## GitHub Adapter Workflows
 
 The GitHub workflows are targetless `graph.v2` formulas. They accept only full
