@@ -49,7 +49,10 @@ def validate_report_text(text: str, *, expected_kind: str = "") -> VerdictReport
     data = yaml.safe_load(match.group("body")) or {}
     if not isinstance(data, dict):
         raise ValidationError("verdict report front matter must be a mapping")
+    return validate_report_data(data, expected_kind=expected_kind)
 
+
+def validate_report_data(data: dict[str, Any], *, expected_kind: str = "") -> VerdictReport:
     schema = required_string(data, "schema")
     kind = required_string(data, "kind")
     verdict = required_string(data, "verdict")

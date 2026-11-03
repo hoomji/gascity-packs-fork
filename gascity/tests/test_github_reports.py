@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -79,6 +80,57 @@ recommended_next_action: ask_reporter
 
         with self.assertRaises(github_reports.ValidationError):
             github_reports.review_outcome("pass", "minor")
+
+    # The generic `review` formula writes gc.build.review.v1 (its artifact schema), so the PR
+    # adapter must read that schema too, not only gc.verdict-report.v1.
+    BUILD_REVIEW_HEAD = (
+        "---\n"
+        "schema: gc.build.review.v1\n"
+        "workflow:\n  id: wf-1\n  formula: review\n"
+        "methodology:\n  pack: gascity\n  name: review\n"
+        "producer:\n  formula: review\n  stage: write-report\n  attempt: 1\n"
+    )
+
+    def _review_outcome_cli(self, text: str) -> tuple[int, str, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(text, encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = github_reports.main(["review-outcome", str(path)])
+            return code, out.getvalue(), err.getvalue()
+
+    def test_review_outcome_reads_build_review_status(self) -> None:
+        cases = {"approved": "approve", "changes_required": "request_changes", "blocked": "block"}
+        for status, outcome in cases.items():
+            with self.subTest(status=status):
+                code, out, err = self._review_outcome_cli(self.BUILD_REVIEW_HEAD + f"status: {status}\n---\n\n## Verdict\n")
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["outcome"], outcome)
+
+    def test_review_outcome_prefers_verdict_fields_on_build_review(self) -> None:
+        text = self.BUILD_REVIEW_HEAD + (
+            "status: changes_required\nkind: review\nverdict: fail\nseverity: minor\n"
+            "findings:\n  - id: f1\n    severity: minor\n    title: t\n    evidence: e\n    required_fix: r\n"
+            "---\n"
+        )
+        code, out, err = self._review_outcome_cli(text)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["outcome"], "comment")
+
+    def test_review_outcome_rejects_unfinished_or_contradictory_build_review(self) -> None:
+        for tail in ("status: draft\n", "status: questions\n", "status: approved\nverdict: fail\nseverity: major\nfindings: []\n"):
+            with self.subTest(tail=tail):
+                code, _, _ = self._review_outcome_cli(self.BUILD_REVIEW_HEAD + tail + "---\n")
+                self.assertNotEqual(code, 0)
+
+    def test_render_review_comment_accepts_build_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(self.BUILD_REVIEW_HEAD + "status: approved\n---\n", encoding="utf-8")
+            comment = github_reports.render_pr_review_comment(path, outcome="approve", head_sha="abc123")
+        self.assertIn("outcome=approve", comment)
+        self.assertIn("- report: pass/none", comment)
 
     def test_renderers_write_sticky_marker_comments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
