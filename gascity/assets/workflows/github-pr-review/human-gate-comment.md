@@ -1,8 +1,13 @@
 
 Read workflow root metadata, including `gc.github.review_report_path`,
 `gc.github.comment_path`, `gc.github.review_outcome`, and `gc.github.post_mode`.
-If `post_mode` {{post_mode}} is not `human_gate`, close this step as a no-op
-gate with metadata `gc.github.public_comment_gate=not_required`.
+If `post_mode` {{post_mode}} is exactly `auto`, this is a no-op gate: run
+`gc bd update <root-bead-id> --set-metadata gc.github.public_comment_gate=not_required`
+(record it on the workflow root, not on this step bead: post-comment reads the
+gate from the root and hard-stops when it is missing), then close this step
+with `gc.outcome=pass`. If `post_mode` is neither `auto` nor `human_gate`, do not stamp the gate:
+record `gc.blocked_reason=invalid-post-mode:<value>` on the workflow root and
+close this step with `gc.outcome=fail`.
 
 In `headless` interaction mode ({{interaction_mode}} at launch), never wait on
 a human: the snapshot compatibility gate blocks `human_gate` post mode for

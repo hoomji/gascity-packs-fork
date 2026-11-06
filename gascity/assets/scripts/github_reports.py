@@ -172,6 +172,12 @@ def review_outcome(verdict: str, severity: str) -> str:
     raise ValidationError(f"unsupported review verdict/severity combination: {verdict}/{severity}")
 
 
+# GitHub rejects comment bodies over 65,536 characters; keep headroom for the header lines.
+MAX_FINDINGS_CHARS = 60_000
+FINDINGS_HEADING_RE = re.compile(r"^##\s+Findings\s*$", re.MULTILINE)
+NEXT_H2_RE = re.compile(r"^##\s", re.MULTILINE)
+
+
 def render_pr_review_comment(
     report_path: Path,
     *,
@@ -180,20 +186,140 @@ def render_pr_review_comment(
     artifact_ref: str = "",
     human_approved: bool = False,
 ) -> str:
-    report = load_review_report(report_path.read_text(encoding="utf-8"))
+    text = report_path.read_text(encoding="utf-8")
+    report = load_review_report(text)
     if outcome != review_outcome(report.verdict, report.severity):
         raise ValidationError(f"outcome {outcome!r} does not match review report {report.verdict}/{report.severity}")
     head_sha = marker_value("head_sha", head_sha)
-    artifact = public_line("artifact_ref", artifact_ref or str(report_path))
     gate_text = "human approved" if human_approved else "not human approved"
-    return (
-        f"<!-- gc:github-pr-review head_sha={head_sha} outcome={outcome} -->\n"
-        "## GC PR Review\n\n"
-        f"- outcome: {outcome}\n"
-        f"- report: {report.verdict}/{report.severity}\n"
-        f"- gate: {gate_text}\n"
-        f"- artifact: {artifact}\n"
+    lines = [
+        f"<!-- gc:github-pr-review head_sha={head_sha} outcome={outcome} -->",
+        "## GC PR Review",
+        "",
+        f"- outcome: {outcome}",
+        f"- report: {report.verdict}/{report.severity}",
+        f"- gate: {gate_text}",
+    ]
+    # A local report path means nothing to a PR reader; name an artifact only when the caller
+    # supplies a public reference.
+    if artifact_ref:
+        lines.append(f"- artifact: {public_line('artifact_ref', artifact_ref)}")
+    if report.findings:
+        findings = "\n".join(render_finding(finding) for finding in report.findings)
+    else:
+        # gc.build.review.v1 reports (the default `review` formula) keep findings as Markdown
+        # under a `## Findings` heading rather than in front matter.
+        findings = public_markdown(markdown_findings_section(text))
+    if findings:
+        lines.extend(["", "### Findings", "", cap_length(findings)])
+    return "\n".join(lines) + "\n"
+
+
+def markdown_findings_section(text: str) -> str:
+    match = FRONT_MATTER_RE.match(text)
+    body = text[match.end():] if match else text
+    heading = FINDINGS_HEADING_RE.search(body)
+    if not heading:
+        return ""
+    rest = body[heading.end():]
+    end = NEXT_H2_RE.search(rest)
+    return (rest[: end.start()] if end else rest).strip()
+
+
+def render_finding(finding: dict[str, Any]) -> str:
+    def field(key: str, *, inline: bool = False) -> str:
+        value = finding.get(key)
+        if value in (None, ""):
+            return ""
+        flat = " ".join(str(value).split())
+        if inline:
+            # id and title sit inside a bold run: escape anything that would end it or open code.
+            return neutralize(re.sub(r"([*_`])", r"\\\1", flat))
+        return neutralize_inline(flat)
+
+    head = (
+        f"- **{field('id', inline=True) or '?'}** ({field('severity') or 'unrated'}): "
+        f"{field('title', inline=True) or 'untitled'}"
     )
+    parts = [head]
+    if field("evidence"):
+        parts.append(f"  - evidence: {field('evidence')}")
+    if field("required_fix"):
+        parts.append(f"  - fix: {field('required_fix')}")
+    return "\n".join(parts)
+
+
+CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+HEADING_SHIFT = 3  # report H1 lands at H4, below the comment's own `### Findings`
+
+
+def neutralize(text: str) -> str:
+    """Make prose inert in a GitHub comment: no raw HTML, no @-mentions."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # A zero-width space after `@` stops GitHub from notifying a real account.
+    return re.sub(r"@(?=[A-Za-z0-9])", "@\u200b", text)
+
+
+def neutralize_inline(line: str) -> str:
+    """neutralize() outside code spans; GitHub renders code spans literally, so leave them as written."""
+    out, last = [], 0
+    for match in CODE_SPAN_RE.finditer(line):
+        out.append(neutralize(line[last : match.start()]))
+        out.append(match.group(0))
+        last = match.end()
+    out.append(neutralize(line[last:]))
+    return "".join(out)
+
+
+def public_markdown(text: str) -> str:
+    """Keep reviewer Markdown and its code verbatim, but make prose inert and nest headings below ours."""
+    lines: list[str] = []
+    fence = ""
+    for line in text.strip().splitlines():
+        marker = FENCE_RE.match(line)
+        if fence:
+            lines.append(line)
+            if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if marker:
+            fence = marker.group(1)
+            lines.append(line)
+            continue
+        lines.append(demote_heading_line(neutralize_inline(line)))
+    if fence:
+        lines.append(fence)  # never let an unclosed fence swallow the rest of the comment
+    return "\n".join(lines).strip()
+
+
+def demote_heading_line(line: str) -> str:
+    hash_heading = re.match(r"^( {0,3})(#{1,6})(\s.*)?$", line)
+    if hash_heading:
+        level = len(hash_heading.group(2)) + HEADING_SHIFT
+        rest = hash_heading.group(3) or ""
+        if level <= 6:
+            return f"{hash_heading.group(1)}{'#' * level}{rest}"
+        return f"{hash_heading.group(1)}**{rest.strip()}**" if rest.strip() else ""
+    if re.match(r"^ {0,3}(=+|-+)\s*$", line):
+        return "\\" + line.strip()
+    return line
+
+
+def cap_length(text: str) -> str:
+    if len(text) <= MAX_FINDINGS_CHARS:
+        return text
+    cut = text.rfind("\n", 0, MAX_FINDINGS_CHARS)
+    cut = cut if cut > 0 else MAX_FINDINGS_CHARS
+    kept = text[:cut]
+    open_fence = ""
+    for line in kept.splitlines():
+        marker = FENCE_RE.match(line)
+        if marker:
+            open_fence = "" if open_fence else marker.group(1)
+    if open_fence:
+        kept += "\n" + open_fence
+    return kept + "\n\n_Findings truncated to fit GitHub's comment size limit; see the full review report._"
 
 
 def render_triage_comment(

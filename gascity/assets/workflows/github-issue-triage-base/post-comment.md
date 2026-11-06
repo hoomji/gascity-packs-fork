@@ -10,6 +10,9 @@ the human-approved flag before posting so approved `security_sensitive` or `p0`
 analysis can be included intentionally. Then create or update the
 body-hash-keyed issue comment through
 `{{pack_root}}/assets/scripts/github_api.py comment-create "{{github_issue_url}}" --body-file <gc.github.comment_path>` or
-`{{pack_root}}/assets/scripts/github_api.py comment-update`. Update workflow
-root metadata with the GitHub comment id and URL. Do not call `gh` directly
+`{{pack_root}}/assets/scripts/github_api.py comment-update`. After the create or update succeeds, record on the workflow root
+`gc.github.comment_id=<id>`, `gc.github.comment_url=<url>` and
+`gc.github.comment_posted_this_run=true`, then close this step with
+`gc.outcome=pass`. Only this step writes `comment_posted_this_run`; a comment
+id or url left by an earlier run or by the reuse step does not count. Do not call `gh` directly
 except to diagnose a wrapper failure.
