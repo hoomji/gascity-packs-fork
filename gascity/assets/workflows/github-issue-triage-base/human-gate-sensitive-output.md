@@ -45,8 +45,11 @@ feedback: `gc.github.public_comment_gate=approved`, `rejected`, or
 `revision_requested` when the public comment must be revised before posting,
 and `rejected` when the public comment must not be posted. Close fail only for
 explicit rejection or abort, not for silence. If none of those conditions
-applies, close this step as a no-op gate with metadata
-`gc.github.public_comment_gate=not_required`.
+applies, this is a no-op gate: run
+`gc bd update <root-bead-id> --set-metadata gc.github.public_comment_gate=not_required`
+(record it on the workflow root, not on this step bead: post-comment reads the
+gate from the root and hard-stops when it is missing), then close this step
+with `gc.outcome=pass`.
 
 This gate intentionally evaluates runtime triage metadata in the step body
 rather than a static formula condition.

@@ -4900,6 +4900,36 @@ description = "Override sink that writes the base triage report contract."
                 with self.subTest(label=label, fragment=fragment):
                     self.assertIn(fragment, text)
 
+    def test_github_no_op_gate_stamps_the_workflow_root(self) -> None:
+        # gp-mzit8: post-comment reads gc.github.public_comment_gate from the workflow root,
+        # so a no-op gate that stamps only its own step bead hard-stops every auto post.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for formula, gate_id in (
+            ("github-pr-review", "human-gate-comment"),
+            ("github-issue-triage", "human-gate-sensitive-output"),
+        ):
+            data = resolve_formula(root, formula)
+            gate = next(step for step in data["steps"] if step["id"] == gate_id)
+            text = node_description(root, gate)
+            with self.subTest(formula=formula):
+                self.assertIn(
+                    "gc bd update <root-bead-id> --set-metadata gc.github.public_comment_gate=not_required",
+                    text,
+                )
+                self.assertIn("not on this step bead", text)
+
+    def test_github_finalize_never_passes_without_a_posted_comment(self) -> None:
+        # gp-mzit8: the root closed gc.outcome=pass although post-comment hard-stopped.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for formula in ("github-pr-review", "github-issue-triage"):
+            data = resolve_formula(root, formula)
+            finalize = next(step for step in data["steps"] if step["id"] == "finalize")
+            text = node_description(root, finalize)
+            with self.subTest(formula=formula):
+                self.assertIn("gc.github.final_comment_posted=false", text)
+                self.assertIn("gc.outcome=fail", text)
+                self.assertIn("Never record `gc.outcome=pass`", text)
+
     def test_all_declared_formula_vars_are_rendered_into_graph_text(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         for path in sorted((root / "formulas").glob("*.formula.toml")):

@@ -132,6 +132,33 @@ recommended_next_action: ask_reporter
         self.assertIn("outcome=approve", comment)
         self.assertIn("- report: pass/none", comment)
 
+    def test_render_review_comment_carries_the_findings(self) -> None:
+        # gp-mzit8: the posted comment named only a local artifact path, so readers saw no findings.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                "---\n"
+                "schema: gc.verdict-report.v1\n"
+                "kind: review\n"
+                "verdict: fail\n"
+                "severity: minor\n"
+                "findings:\n"
+                "  - id: F1\n"
+                "    severity: minor\n"
+                "    title: Hardcoded produced_at\n"
+                "    evidence: make_envelope sets a fixed literal. <!-- x -->\n"
+                "    required_fix: Emit the real time.\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="comment", head_sha="abc123")
+        self.assertIn("### Findings", comment)
+        self.assertIn("**F1** (minor): Hardcoded produced_at", comment)
+        self.assertIn("make_envelope sets a fixed literal.", comment)
+        self.assertIn("Emit the real time.", comment)
+        self.assertEqual(comment.count("<!--"), 1, "finding text must not open a second HTML comment")
+        self.assertNotIn(tmp, comment, "a local artifact path is not useful in a public comment")
+
     def test_renderers_write_sticky_marker_comments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

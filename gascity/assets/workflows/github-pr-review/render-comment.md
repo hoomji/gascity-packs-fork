@@ -14,8 +14,9 @@ real no-op path.
 
 Render the normal PR comment to `<gc.github.review_dir>/comment.md` with
 `{{pack_root}}/assets/scripts/github_reports.py render-review-comment`, passing
-the mapped outcome, `gc.github.head_sha`, and an artifact reference to the
-review report. Update workflow root metadata with
+the mapped outcome and `gc.github.head_sha`; it renders the report's findings
+into the comment. Pass `--artifact-ref` only for a reference a PR reader can
+open (never a local filesystem path). Update workflow root metadata with
 `gc.github.comment_path=<absolute comment.md path>` and
 `gc.github.review_outcome=<approve|comment|request_changes|block>`.
 The source PR URL is {{github_pr_url}}.

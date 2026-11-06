@@ -184,16 +184,43 @@ def render_pr_review_comment(
     if outcome != review_outcome(report.verdict, report.severity):
         raise ValidationError(f"outcome {outcome!r} does not match review report {report.verdict}/{report.severity}")
     head_sha = marker_value("head_sha", head_sha)
-    artifact = public_line("artifact_ref", artifact_ref or str(report_path))
     gate_text = "human approved" if human_approved else "not human approved"
-    return (
-        f"<!-- gc:github-pr-review head_sha={head_sha} outcome={outcome} -->\n"
-        "## GC PR Review\n\n"
-        f"- outcome: {outcome}\n"
-        f"- report: {report.verdict}/{report.severity}\n"
-        f"- gate: {gate_text}\n"
-        f"- artifact: {artifact}\n"
-    )
+    lines = [
+        f"<!-- gc:github-pr-review head_sha={head_sha} outcome={outcome} -->",
+        "## GC PR Review",
+        "",
+        f"- outcome: {outcome}",
+        f"- report: {report.verdict}/{report.severity}",
+        f"- gate: {gate_text}",
+    ]
+    # A local report path means nothing to a PR reader; name an artifact only when the caller
+    # supplies a public reference.
+    if artifact_ref:
+        lines.append(f"- artifact: {public_line('artifact_ref', artifact_ref)}")
+    if report.findings:
+        lines.extend(["", "### Findings", ""])
+        lines.extend(render_finding(finding) for finding in report.findings)
+    return "\n".join(lines) + "\n"
+
+
+def render_finding(finding: dict[str, Any]) -> str:
+    def field(key: str) -> str:
+        value = finding.get(key)
+        return public_text(str(value)) if value not in (None, "") else ""
+
+    head = f"- **{field('id') or '?'}** ({field('severity') or 'unrated'}): {field('title') or 'untitled'}"
+    parts = [head]
+    if field("evidence"):
+        parts.append(f"  - evidence: {field('evidence')}")
+    if field("required_fix"):
+        parts.append(f"  - fix: {field('required_fix')}")
+    return "\n".join(parts)
+
+
+def public_text(value: str) -> str:
+    """Flatten reviewer text to one line that cannot open or close an HTML comment."""
+    flat = " ".join(value.split())
+    return flat.replace("<!--", "&lt;!--").replace("--!>", "--!&gt;").replace("-->", "--&gt;")
 
 
 def render_triage_comment(
