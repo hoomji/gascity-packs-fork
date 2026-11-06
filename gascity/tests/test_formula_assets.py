@@ -227,7 +227,9 @@ MODE_VAR_DEFAULTS = {
 BUILD_ARTIFACT_CHECK_SCRIPT = ".gc/scripts/checks/build-artifact-valid.sh"
 GASCITY_BUILD_ARTIFACT_CHECK_SCRIPT = "../assets/scripts/checks/build-artifact-valid.sh"
 
-SHARED_WORKTREE_CHECK_SCRIPT = ".gc/scripts/checks/prepare-shared-worktree.sh"
+# City fork: layer-resolved pack asset, like the other gascity checks (#593),
+# not upstream #347's launcher-local .gc path.
+SHARED_WORKTREE_CHECK_SCRIPT = "../assets/scripts/checks/prepare-shared-worktree.sh"
 
 # The step that creates or reuses the one shared worktree a drain implements in
 # and persists its path as `work_dir` on each item's source anchor, and the step
@@ -4690,6 +4692,7 @@ description = "Override sink that writes the base triage report contract."
                 "build-artifact-valid.sh",
                 "design-review-approved.sh",
                 "implementation-review-approved.sh",
+                "prepare-shared-worktree.sh",
             },
         )
 

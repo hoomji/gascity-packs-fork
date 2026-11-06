@@ -177,6 +177,9 @@ class PrepareSharedWorktreeTest(unittest.TestCase):
         git("config", "user.name", "test", cwd=launcher)
         git("remote", "add", "origin", str(self.origin), cwd=launcher)
         git("fetch", "--prune", "origin", cwd=launcher)
+        # git >= 2.48 fetch writes origin/HEAD itself (remote.<name>.followRemoteHEAD
+        # defaults to "create"), so drop it to model the older and CI checkouts.
+        subprocess.run(["git", "remote", "set-head", "origin", "-d"], cwd=launcher, capture_output=True)
         self.assertEqual(
             origin_head(launcher),
             "",
@@ -310,6 +313,56 @@ class PrepareSharedWorktreeTest(unittest.TestCase):
         )
         # The item root is not the anchor; nothing may be stamped on it.
         self.assertNotIn("work_dir", self.read_bead("root-1")["metadata"])
+
+    # --- city fork: explicit base branch (gc.shared_work_base_branch) ----
+
+    def push_release_branch(self) -> str:
+        pusher = self.tmp / f"release-{next(self._counter)}"
+        git("clone", str(self.origin), str(pusher), cwd=self.tmp)
+        git("config", "user.email", "test@example.invalid", cwd=pusher)
+        git("config", "user.name", "test", cwd=pusher)
+        git("checkout", "-b", "release/1.x", cwd=pusher)
+        (pusher / "RELEASE").write_text("release\n", encoding="utf-8")
+        git("add", "RELEASE", cwd=pusher)
+        git("commit", "-m", "release-only work", cwd=pusher)
+        git("push", "origin", "release/1.x", cwd=pusher)
+        return git("rev-parse", "HEAD", cwd=pusher)
+
+    def base_branch_root(self, base: str) -> None:
+        self.write_bead("step-1", {"gc.root_bead_id": "root-1"})
+        self.write_bead(
+            "root-1",
+            {
+                "gc.work_dir": str(self.launcher),
+                "gc.drain_control_id": "drain-1",
+                "gc.drain_member_id": "anchor-1",
+                "gc.drain_index": "0",
+                "gc.shared_work_base_branch": base,
+            },
+        )
+        self.write_bead("anchor-1", {})
+
+    def test_an_explicit_base_branch_replaces_the_default_branch(self) -> None:
+        release_tip = self.push_release_branch()
+        self.base_branch_root("release/1.x")
+        # No origin/HEAD and no default-branch lookup is needed for an explicit base.
+        subprocess.run(["git", "remote", "set-head", "origin", "-d"], cwd=self.launcher, capture_output=True)
+        proc = self.run_script(bead_id="step-1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        worktree = self.launcher / "worktrees" / "shared-drain-1"
+        self.assertEqual(git("rev-parse", "HEAD", cwd=worktree), release_tip)
+        self.assertTrue((worktree / "RELEASE").is_file())
+
+    def test_an_explicit_base_origin_lacks_fails_closed_without_fallback(self) -> None:
+        self.base_branch_root("release/9.x")
+        proc = self.run_script(bead_id="step-1")
+        self.assert_failed_closed(proc, "for an explicit base")
+        self.assertEqual(self.worktree_dirs(), [])
+        self.assertNotIn("work_dir", self.read_bead("anchor-1")["metadata"])
+
+    def test_an_unsafe_base_branch_is_rejected(self) -> None:
+        self.base_branch_root("--upload-pack=evil")
+        self.assert_failed_closed(self.run_script(bead_id="step-1"), "invalid base branch")
 
     def test_formula_check_mode_reads_a_bare_object_response(self) -> None:
         """The other `gc bd show --json` shape.

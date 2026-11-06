@@ -14,6 +14,12 @@ set -euo pipefail
 # Formula-check mode reads $GC_BEAD_ID and resolves everything from beads. The
 # three-argument mode takes <launcher-root> <drain-control-id> <source-anchor-id>
 # and is what manual smoke runs and the tests use.
+#
+# City fork: an optional base branch (the formulas' `base_branch` var) replaces
+# the remote default branch as the base of a NEW shared worktree. The prepare
+# step's prompt records it on the item's workflow root as
+# gc.shared_work_base_branch; manual mode reads $SHARED_WORK_BASE_BRANCH. An
+# explicit base that origin lacks fails closed, never falls back to the default.
 
 fail() {
   echo "gc-shared-worktree: $*" >&2
@@ -67,6 +73,7 @@ if [ "$#" -eq 0 ]; then
   DRAIN_CONTROL_ID="$(metadata_value "$ROOT_JSON" "gc.drain_control_id")"
   SOURCE_ANCHOR_ID="$(metadata_value "$ROOT_JSON" "gc.drain_member_id")"
   DRAIN_INDEX="$(metadata_value "$ROOT_JSON" "gc.drain_index")"
+  BASE_BRANCH="$(metadata_value "$ROOT_JSON" "gc.shared_work_base_branch")"
   case "$DRAIN_INDEX" in
     "" | *[!0-9]*) fail "workflow root $ROOT_ID has invalid gc.drain_index: $DRAIN_INDEX" ;;
   esac
@@ -74,12 +81,16 @@ elif [ "$#" -eq 3 ]; then
   LAUNCHER_RAW="$1"
   DRAIN_CONTROL_ID="$2"
   SOURCE_ANCHOR_ID="$3"
+  BASE_BRANCH="${SHARED_WORK_BASE_BRANCH:-}"
 else
   fail "usage: prepare-shared-worktree.sh [<launcher-root> <drain-control-id> <source-anchor-id>]"
 fi
 
 case "$DRAIN_CONTROL_ID" in
   "" | *[!A-Za-z0-9._-]*) fail "invalid drain control id: $DRAIN_CONTROL_ID" ;;
+esac
+case "$BASE_BRANCH" in
+  -* | *..* | *[!A-Za-z0-9._/-]*) fail "invalid base branch: $BASE_BRANCH" ;;
 esac
 case "$SOURCE_ANCHOR_ID" in
   "" | *[!A-Za-z0-9._-]*) fail "invalid source anchor id: $SOURCE_ANCHOR_ID" ;;
@@ -131,22 +142,30 @@ if [ ! -e "$WORKTREE" ]; then
   # exit 128, and under `set -euo pipefail` that status propagates out of the
   # assignment and kills the script -- silently, before the refresh below can
   # run. The empty string is the answer this branch is written to handle.
-  DEFAULT_BRANCH=$(git -C "$LAUNCHER_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
-  if [ -z "$DEFAULT_BRANCH" ]; then
-    # refs/remotes/origin/HEAD is written by `git clone` and refreshed by
-    # `git remote set-head origin --auto`. It is NOT written by `git init` plus
-    # `git fetch`, which is how actions/checkout and several of our own
-    # checkouts are built, so this refresh is load-bearing rather than
-    # defensive. The fetch below still guarantees the base is current.
-    git -C "$LAUNCHER_ROOT" remote set-head origin --auto >/dev/null 2>&1 || true
+  if [ -n "$BASE_BRANCH" ]; then
+    # Explicit base: no origin/HEAD or default-branch lookup needed.
+    DEFAULT_BRANCH="$BASE_BRANCH"
+  else
     DEFAULT_BRANCH=$(git -C "$LAUNCHER_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+    if [ -z "$DEFAULT_BRANCH" ]; then
+      # refs/remotes/origin/HEAD is written by `git clone` and refreshed by
+      # `git remote set-head origin --auto`. It is NOT written by `git init` plus
+      # `git fetch`, which is how actions/checkout and several of our own
+      # checkouts are built, so this refresh is load-bearing rather than
+      # defensive. The fetch below still guarantees the base is current.
+      git -C "$LAUNCHER_ROOT" remote set-head origin --auto >/dev/null 2>&1 || true
+      DEFAULT_BRANCH=$(git -C "$LAUNCHER_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+    fi
+    [ -n "$DEFAULT_BRANCH" ] || fail "cannot resolve the remote default branch in $LAUNCHER_ROOT"
   fi
-  [ -n "$DEFAULT_BRANCH" ] || fail "cannot resolve the remote default branch in $LAUNCHER_ROOT"
 
   # Exec checks run under a sandboxed gate environment with no SSH agent and no
   # inherited GIT_* configuration, so a credentialed fetch can fail in ways that
   # are invisible unless git's own diagnosis is carried into the failure.
   if ! GIT_ERR="$(git -C "$LAUNCHER_ROOT" fetch --prune origin "$DEFAULT_BRANCH" 2>&1 >/dev/null)"; then
+    if [ -n "$BASE_BRANCH" ]; then
+      fail "cannot fetch origin/$DEFAULT_BRANCH for an explicit base (base_branch=$BASE_BRANCH) in $LAUNCHER_ROOT: $GIT_ERR"
+    fi
     fail "cannot fetch origin/$DEFAULT_BRANCH in $LAUNCHER_ROOT: $GIT_ERR"
   fi
 

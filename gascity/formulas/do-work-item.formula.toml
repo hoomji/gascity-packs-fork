@@ -23,6 +23,10 @@ default = ""
 description = "Role target for implementation work."
 default = "gc.implementation-worker"
 
+[vars.base_branch]
+description = "Branch to cut the shared drain worktree from. Empty means the remote default branch. Drains pass it from the parent formula (formula-spec-v2 section 3.3)."
+default = ""
+
 [[steps]]
 id = "prepare-shared-worktree"
 title = "Prepare shared implementation worktree"
@@ -34,7 +38,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = ".gc/scripts/checks/prepare-shared-worktree.sh"
+path = "../assets/scripts/checks/prepare-shared-worktree.sh"
 timeout = "5m"
 
 [[steps]]

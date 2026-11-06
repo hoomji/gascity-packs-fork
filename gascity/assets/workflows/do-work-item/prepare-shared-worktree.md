@@ -1,5 +1,8 @@
 Prepare the authoritative worktree for one shared-drain item.
 
+This step writes named beads besides its claimed step: the workflow root
+(`gc.work_dir`, `gc.shared_work_base_branch`); nothing here conflicts with "update or close only your claimed bead".
+
 This is infrastructure setup only. Read the claimed step's `gc.root_bead_id`,
 read that workflow root bead, and require `gc.drain_member_id`, `gc.drain_index`,
 `gc.drain_control_id`, and `gc.work_dir` on it. `gc.drain_member_id` is the
@@ -15,6 +18,13 @@ your own working directory is the launcher rig repository root — `pwd -P` must
 equal the toplevel of the git checkout you are in — then set it with
 `gc bd update <root-bead-id> --set-metadata gc.work_dir=<absolute rig root>`.
 Record only a directory you verified this way; never a guess.
+
+The base branch is base_branch `{{base_branch}}`. When it is non-empty and the
+workflow root has no `gc.shared_work_base_branch`, set it with
+`gc bd update <root-bead-id> --set-metadata gc.shared_work_base_branch={{base_branch}}`.
+The machine check then cuts a new shared worktree from `origin/{{base_branch}}`
+instead of the remote default branch, and fails rather than falling back when
+origin lacks it. When base_branch is empty, record nothing.
 
 Do not read, edit, test, stage, or commit product source in this step. Its
 machine check creates or reuses the one deterministic shared git worktree for
