@@ -231,9 +231,11 @@ def render_finding(finding: dict[str, Any]) -> str:
         value = finding.get(key)
         if value in (None, ""):
             return ""
-        flat = public_text(str(value))
-        # id and title sit inside a bold run; a stray `*` would end it early.
-        return re.sub(r"([*`])", r"\\\1", flat) if inline else flat
+        flat = " ".join(str(value).split())
+        if inline:
+            # id and title sit inside a bold run: escape anything that would end it or open code.
+            return neutralize(re.sub(r"([*_`])", r"\\\1", flat))
+        return neutralize_inline(flat)
 
     head = (
         f"- **{field('id', inline=True) or '?'}** ({field('severity') or 'unrated'}): "
@@ -247,23 +249,61 @@ def render_finding(finding: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+HEADING_SHIFT = 3  # report H1 lands at H4, below the comment's own `### Findings`
+
+
 def neutralize(text: str) -> str:
-    """Make reviewer text inert in a GitHub comment: no raw HTML, no @-mentions."""
+    """Make prose inert in a GitHub comment: no raw HTML, no @-mentions."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     # A zero-width space after `@` stops GitHub from notifying a real account.
     return re.sub(r"@(?=[A-Za-z0-9])", "@\u200b", text)
 
 
-def public_text(value: str) -> str:
-    """Flatten reviewer text to one inert line."""
-    return neutralize(" ".join(value.split()))
+def neutralize_inline(line: str) -> str:
+    """neutralize() outside code spans; GitHub renders code spans literally, so leave them as written."""
+    out, last = [], 0
+    for match in CODE_SPAN_RE.finditer(line):
+        out.append(neutralize(line[last : match.start()]))
+        out.append(match.group(0))
+        last = match.end()
+    out.append(neutralize(line[last:]))
+    return "".join(out)
 
 
 def public_markdown(text: str) -> str:
-    """Keep reviewer Markdown lists, but make it inert and nest its headings below ours."""
-    if not text.strip():
-        return ""
-    return demote_markdown_headings(demote_markdown_headings(neutralize(text)))
+    """Keep reviewer Markdown and its code verbatim, but make prose inert and nest headings below ours."""
+    lines: list[str] = []
+    fence = ""
+    for line in text.strip().splitlines():
+        marker = FENCE_RE.match(line)
+        if fence:
+            lines.append(line)
+            if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if marker:
+            fence = marker.group(1)
+            lines.append(line)
+            continue
+        lines.append(demote_heading_line(neutralize_inline(line)))
+    if fence:
+        lines.append(fence)  # never let an unclosed fence swallow the rest of the comment
+    return "\n".join(lines).strip()
+
+
+def demote_heading_line(line: str) -> str:
+    hash_heading = re.match(r"^( {0,3})(#{1,6})(\s.*)?$", line)
+    if hash_heading:
+        level = len(hash_heading.group(2)) + HEADING_SHIFT
+        rest = hash_heading.group(3) or ""
+        if level <= 6:
+            return f"{hash_heading.group(1)}{'#' * level}{rest}"
+        return f"{hash_heading.group(1)}**{rest.strip()}**" if rest.strip() else ""
+    if re.match(r"^ {0,3}(=+|-+)\s*$", line):
+        return "\\" + line.strip()
+    return line
 
 
 def cap_length(text: str) -> str:
@@ -271,7 +311,15 @@ def cap_length(text: str) -> str:
         return text
     cut = text.rfind("\n", 0, MAX_FINDINGS_CHARS)
     cut = cut if cut > 0 else MAX_FINDINGS_CHARS
-    return text[:cut] + "\n\n_Findings truncated to fit GitHub's comment size limit; see the full review report._"
+    kept = text[:cut]
+    open_fence = ""
+    for line in kept.splitlines():
+        marker = FENCE_RE.match(line)
+        if marker:
+            open_fence = "" if open_fence else marker.group(1)
+    if open_fence:
+        kept += "\n" + open_fence
+    return kept + "\n\n_Findings truncated to fit GitHub's comment size limit; see the full review report._"
 
 
 def render_triage_comment(

@@ -153,7 +153,7 @@ recommended_next_action: ask_reporter
             )
             comment = github_reports.render_pr_review_comment(path, outcome="comment", head_sha="abc123")
         self.assertIn("### Findings", comment)
-        self.assertIn("**F1** (minor): Hardcoded produced_at", comment)
+        self.assertIn("**F1** (minor): Hardcoded produced\\_at", comment)
         self.assertIn("make_envelope sets a fixed literal.", comment)
         self.assertIn("Emit the real time.", comment)
         self.assertEqual(comment.count("<!--"), 1, "finding text must not open a second HTML comment")
@@ -174,7 +174,7 @@ recommended_next_action: ask_reporter
             comment = github_reports.render_pr_review_comment(path, outcome="request_changes", head_sha="abc")
         self.assertIn("### Findings", comment)
         self.assertIn("- F1 major: the handler drops errors", comment)
-        self.assertIn("#### Detail", comment, "report headings nest below the comment's own")
+        self.assertIn("##### Detail", comment, "report headings nest below the comment's own")
         self.assertNotIn("none run", comment, "only the Findings section is posted")
         self.assertNotIn("@octocat", comment, "an @-mention would notify a real account")
         self.assertNotIn("<b>", comment)
@@ -203,6 +203,46 @@ recommended_next_action: ask_reporter
         self.assertNotIn("\n---", comment)
         self.assertIn("F\\*\\*1", comment)
         self.assertNotIn("@octocat", comment)
+
+    def test_render_review_comment_leaves_quoted_code_verbatim(self) -> None:
+        # Escaping and heading demotion must not rewrite code a reviewer quotes.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                self.BUILD_REVIEW_HEAD
+                + "status: changes_required\n---\n"
+                "## Findings\n"
+                "- F1 major: `Vec<T>` and `a && b` break; outside code <b>x</b> & @octocat\n"
+                "```python\n# keep this comment\n@pytest.fixture\nif a < b: pass\n```\n"
+                "- F2 minor: `__init__` stays\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="request_changes", head_sha="abc")
+        for verbatim in ("`Vec<T>`", "`a && b`", "# keep this comment\n@pytest.fixture\nif a < b: pass", "`__init__`"):
+            with self.subTest(verbatim=verbatim):
+                self.assertIn(verbatim, comment)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; @\u200boctocat", comment)
+
+    def test_render_review_comment_escapes_bold_breakers_in_the_finding_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                "---\nschema: gc.verdict-report.v1\nkind: review\nverdict: fail\nseverity: minor\n"
+                "findings:\n  - id: F1\n    severity: minor\n    title: __init__ leaks\n"
+                "    evidence: e\n    required_fix: f\n---\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="comment", head_sha="abc")
+        self.assertIn("\\_\\_init\\_\\_ leaks", comment)
+
+    def test_render_review_comment_truncation_closes_an_open_fence(self) -> None:
+        body = "## Findings\n- F1 major: big\n```\n" + ("x" * 80 + "\n") * 1000 + "```\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(self.BUILD_REVIEW_HEAD + "status: changes_required\n---\n" + body, encoding="utf-8")
+            comment = github_reports.render_pr_review_comment(path, outcome="request_changes", head_sha="abc")
+        before_note = comment.split("_Findings truncated")[0]
+        self.assertEqual(before_note.count("```") % 2, 0, "the truncation note must not render inside a code block")
 
     def test_render_review_comment_caps_findings_under_the_github_limit(self) -> None:
         findings = "".join(
