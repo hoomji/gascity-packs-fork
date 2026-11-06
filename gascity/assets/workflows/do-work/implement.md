@@ -50,9 +50,19 @@ The `## Verification` section must include both the first verification command
 and the final proof command, with the observed pass/fail result.
 
 Write the summary as a `gc.build.implementation-summary.v1` artifact and record
-its absolute path as `gc.implementation.summary_path` on the claimed step bead
-before closing. Update only the claimed bead: the artifact gate reads the path
-from the workflow root first, then from the claimed step.
+its ABSOLUTE path (never a relative one) as `gc.implementation.summary_path` on
+the claimed step bead and on the workflow root before closing:
+`gc bd update <claimed-step-id> --set-metadata gc.implementation.summary_path=<abs>`
+and `gc bd update <root-bead-id> --set-metadata gc.implementation.summary_path=<abs>`.
+These are this step's two named writes, so
+nothing here conflicts with "update or close only your claimed bead": the root
+write is required lifecycle output.
+`close-source-anchor` runs on a different bead (the `implement` control bead,
+not your iteration bead) and possibly in another session, so it can only find
+the summary through the root (gl-rzkx2y, 2026-11-05: the path sat on the
+iteration bead only and the close step failed `missing_summary_evidence`).
+Write no other bead. The artifact gate reads the path from the workflow root
+first, then from the claimed step.
 Include a Markdown coverage table. The validator only recognizes a table with
 an `ID` column and a `Status` column. Use this shape:
 

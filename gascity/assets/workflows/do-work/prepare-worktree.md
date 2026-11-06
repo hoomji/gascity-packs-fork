@@ -34,6 +34,15 @@ below. Write no other bead.
      `gc bd update <root-bead-id> --set-metadata gc.source_anchor_id=<source-anchor-id>`.
      If the root already has `gc.source_anchor_id` (a retry), it must equal the
      id resolved above; hard-fail on a mismatch instead of overwriting it
+2b. Dependency guard (gl-c2tps2, 2026-11-05: a drain started an anchor whose blocker was still
+   open; the lane implemented it and close-source-anchor then failed `dependency_open`). Read the
+   source anchor with `gc bd show <source-anchor-id> --json` (unwrap a one-element list) and look
+   at its `dependencies`. If any entry has `dependency_type=blocks` and a `status` other than
+   `closed`, do not create a worktree and do not persist `work_dir`: set
+   `gc.outcome=fail`, `gc.failure_class=dependency_open` and
+   `gc.failure_reason=<source-anchor-id> blocked by <open blocker ids>` on your claimed step and
+   close it with that reason. Leave the source anchor open; it is re-dispatched once its blockers
+   close.
 3. Validate context path {{context_path}}, files ownership, and verification
    policy for the resolved source anchor.
 4. Create or reuse a deterministic git worktree at

@@ -27,11 +27,27 @@ fail this step without closing any bead if it does not hold: the source anchor
 must not have `gc.synthetic=true`, and when the root has `gc.drain_member_id`
 the source anchor must equal it.
 
-Read `work_dir` from the source anchor and verify the implementation commit and
-summary evidence are present in that worktree. Write per-item summary to
-{{summary_path}} when set. If `summary_path` is not set, first use
-`gc.implementation.summary_path` from the preceding implementation step when it
-is present; otherwise use `{{artifact_root}}/task-<source-anchor-id>-summary.md`.
+Read `work_dir` from the source anchor and verify the implementation commit is
+present in that worktree. Then resolve the summary evidence, taking the FIRST
+candidate that names an existing file (a relative path is tried against the
+worktree, then against the launcher rig root `gc.work_dir` / `$GC_RIG_ROOT`):
+
+1. `{{summary_path}}` when set.
+2. The workflow root's `gc.implementation.summary_path` (implement records the
+   absolute path there).
+3. `gc.implementation.summary_path` on the implement ITERATION beads of this
+   root, newest first: `gc bd list --all --json --metadata-field
+   gc.root_bead_id=<root-bead-id> --metadata-field gc.ralph_step_id=implement
+   --has-metadata-key gc.implementation.summary_path`. Your `needs` dependency
+   is the `implement` control bead (kind `ralph`), which never carries the
+   path; formula-spec-v2 "check" materialization puts the work on
+   `implement.iteration.N` (gl-rzkx2y, 2026-11-05).
+4. The old default `{{artifact_root}}/task-<source-anchor-id>-summary.md`.
+
+The summary may live outside the worktree (for example under the rig root);
+that is valid evidence once the file exists. Fail with
+`gc.failure_class=missing_summary_evidence` only when no candidate exists, and
+list every path you tried in `gc.failure_reason`.
 
 When reading beads with `gc bd show --json`, handle both an object and a
 one-element list before reading metadata. `gc.work_dir` is the launcher rig
