@@ -4319,7 +4319,10 @@ class FormulaAssetTests(unittest.TestCase):
         for fragment in (
             "SUBJECT_PATH=<gc.github.review_dir>/subject.md",
             "REPORT_PATH=<gc.github.review_dir>/review-report.md",
-            "gc sling gc.run-operator {{code_review_formula}} --formula",
+            "gc sling gc.run-operator <root-bead-id> --on {{code_review_formula}} --json",
+            "already has live workflow(s)",
+            "Never pass `--force`",
+            "gc.github.review_root_id",
             "--var subject_path=\"$SUBJECT_PATH\"",
             "--var report_path=\"$REPORT_PATH\"",
             "review-outcome \"$REPORT_PATH\"",
@@ -4329,6 +4332,10 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(step="run-review", fragment=fragment):
                 self.assertIn(fragment, run_review)
+        # 2026-11-05: a free-floating `--formula` launch let each revisit of the step sling
+        # another review root (487 against three PR heads). The launch must be attached to the
+        # workflow root so gc's one-live-workflow-per-source-bead rule refuses a second one.
+        self.assertNotIn("{{code_review_formula}} --formula", run_review)
         for fragment in (
             "<gc.github.review_dir>/comment.md",
             "gc.github.reused_current_output=true",
@@ -4337,6 +4344,106 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(step="render-comment", fragment=fragment):
                 self.assertIn(fragment, render_comment)
+
+    def test_github_pr_review_run_review_completes_on_an_exec_check(self) -> None:
+        # The step closes on a deterministic verdict, not on the agent's judgment.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        data = tomllib.loads((root / "formulas" / "github-pr-review.formula.toml").read_text(encoding="utf-8"))
+        run_review = next(step for step in data["steps"] if step["id"] == "run-review")
+        check = run_review.get("check") or {}
+        self.assertEqual(check.get("max_attempts"), 2)
+        self.assertEqual(
+            check.get("check"),
+            {"mode": "exec", "path": "../assets/scripts/checks/pr-review-report-valid.sh", "timeout": "2m"},
+        )
+
+    PR_REVIEW_REPORT = (
+        "---\n"
+        "schema: gc.build.review.v1\n"
+        "workflow:\n  id: wf-1\n  formula: review\n"
+        "methodology:\n  pack: gascity\n  name: review\n"
+        "producer:\n  formula: review\n  stage: write-report\n  attempt: 1\n"
+        "status: {status}\n"
+        "---\n\n## Verdict\n"
+    )
+
+    def _run_pr_review_report_check(
+        self,
+        *,
+        root_meta: dict[str, str] | None,
+        report_status: str | None = "approved",
+        report_in_dir: bool = True,
+    ) -> subprocess.CompletedProcess:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        script = root / "assets" / "scripts" / "checks" / "pr-review-report-valid.sh"
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            review_dir = tmp / "reviews" / "abc123"
+            review_dir.mkdir(parents=True)
+            report = (review_dir if report_in_dir else tmp) / "review-report.md"
+            if report_status is not None:
+                report.write_text(self.PR_REVIEW_REPORT.format(status=report_status), encoding="utf-8")
+            meta = {
+                "gc.github.review_dir": str(review_dir),
+                "gc.github.review_report_path": str(report),
+                **(root_meta or {}),
+            }
+            beads = {
+                "step": {"id": "step", "metadata": {"gc.root_bead_id": "wfroot"}},
+                "wfroot": {"id": "wfroot", "metadata": {k: v for k, v in meta.items() if v is not None}},
+            }
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            show_dir = tmp / "show"
+            show_dir.mkdir()
+            for bead, payload in beads.items():
+                (show_dir / f"{bead}.json").write_text(json.dumps([payload]), encoding="utf-8")
+            fake_gc = bin_dir / "gc"
+            fake_gc.write_text(
+                "#!/usr/bin/env bash\n"
+                "[ -n \"${GC_DOWN:-}\" ] && exit 1\n"
+                "[ \"$1 $2\" = \"bd show\" ] || exit 2\n"
+                "cat \"$BD_SHOW_DIR/$3.json\"\n",
+                encoding="utf-8",
+            )
+            fake_gc.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "BD_SHOW_DIR": str(show_dir),
+                "GC_BEAD_ID": "step",
+            }
+            if root_meta is None:
+                env["GC_DOWN"] = "1"
+            return subprocess.run([str(script)], env=env, text=True, capture_output=True, check=False)
+
+    def test_pr_review_report_check_passes_a_recorded_valid_report(self) -> None:
+        result = self._run_pr_review_report_check(root_meta={"gc.github.review_outcome": "approve"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("outcome=approve", result.stdout)
+
+    def test_pr_review_report_check_says_not_yet(self) -> None:
+        cases = {
+            "no report written": ({"gc.github.review_outcome": "approve"}, None, True),
+            "report unfinished": ({"gc.github.review_outcome": "approve"}, "in_progress", True),
+            "outcome not recorded": ({}, "approved", True),
+            "outcome disagrees": ({"gc.github.review_outcome": "approve"}, "blocked", True),
+            "report outside the head dir": ({"gc.github.review_outcome": "approve"}, "approved", False),
+            "no report path": (
+                {"gc.github.review_outcome": "approve", "gc.github.review_report_path": None},
+                "approved",
+                True,
+            ),
+        }
+        for name, (meta, status, in_dir) in cases.items():
+            with self.subTest(case=name):
+                result = self._run_pr_review_report_check(root_meta=meta, report_status=status, report_in_dir=in_dir)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("pr-review-report:", result.stderr)
+
+    def test_pr_review_report_check_exits_75_when_gc_is_unreachable(self) -> None:
+        result = self._run_pr_review_report_check(root_meta=None)
+        self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
 
     def test_github_issue_fix_uses_implementation_plan_artifact_contract(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -4644,6 +4751,7 @@ description = "Override sink that writes the base triage report contract."
                 "design-review-approved.sh",
                 "gap-analysis-approved.sh",
                 "implementation-review-approved.sh",
+                "pr-review-report-valid.sh",
                 "prepare-shared-worktree.sh",
             ],
         )
@@ -4693,6 +4801,7 @@ description = "Override sink that writes the base triage report contract."
                 "design-review-approved.sh",
                 "implementation-review-approved.sh",
                 "prepare-shared-worktree.sh",
+                "pr-review-report-valid.sh",
             },
         )
 

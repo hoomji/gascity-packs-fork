@@ -75,6 +75,18 @@ needs = ["reuse-current-head"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/github-pr-review/run-review.md"
 
+# Done is a verdict, not the agent's call: the root must record a validated
+# review report under this head's review dir. A "not yet" spends one attempt;
+# the next attempt may launch a fresh review only after the earlier one closed,
+# because gc refuses a second live workflow on the same source bead.
+[steps.check]
+max_attempts = 2
+
+[steps.check.check]
+mode = "exec"
+path = "../assets/scripts/checks/pr-review-report-valid.sh"
+timeout = "2m"
+
 [[steps]]
 id = "render-comment"
 title = "Render sticky PR comment"
