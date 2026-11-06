@@ -8,6 +8,7 @@ Launch inputs:
 - implementation_target: {{implementation_target}}
 - summary_path: {{summary_path}} (empty means use the default item summary path)
 - base_branch: {{base_branch}} (empty means the remote default branch)
+- require_delivery: {{require_delivery}} (true: the close step cannot pass until the lane's commit is pushed or in a PR)
 """
 formula = "do-work"
 version = 1
@@ -31,6 +32,10 @@ default = ""
 [vars.base_branch]
 description = "Branch to cut implementation worktrees from and to target when publishing. Empty means the remote default branch. Set it per rig with formula_vars."
 default = ""
+
+[vars.require_delivery]
+description = "Set true so close-source-anchor cannot pass until the lane's commit is on an origin branch other than base_branch, or in an open or merged PR. Drain items are exempt: the draining workflow publishes. Set it per rig with formula_vars."
+default = "false"
 
 [[steps]]
 id = "prepare-worktree"
@@ -59,3 +64,13 @@ title = "Close owned source anchor"
 needs = ["implement"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/do-work/close-source-anchor.md"
+
+# The check runs after each close attempt; it passes at once unless require_delivery is true
+# (assets/scripts/checks/do-work-delivered.sh: 0 delivered or not required, 1 not yet, 75 infra).
+[steps.check]
+max_attempts = 2
+
+[steps.check.check]
+mode = "exec"
+path = "../assets/scripts/checks/do-work-delivered.sh"
+timeout = "2m"

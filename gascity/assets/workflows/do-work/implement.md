@@ -50,8 +50,9 @@ The `## Verification` section must include both the first verification command
 and the final proof command, with the observed pass/fail result.
 
 Write the summary as a `gc.build.implementation-summary.v1` artifact and record
-its ABSOLUTE path (never a relative one) as `gc.implementation.summary_path` on
-the claimed step bead and on the workflow root before closing:
+its ABSOLUTE path (never a relative one) as
+`gc.implementation.summary_path` on the claimed step bead and on the workflow
+root before closing:
 `gc bd update <claimed-step-id> --set-metadata gc.implementation.summary_path=<abs>`
 and `gc bd update <root-bead-id> --set-metadata gc.implementation.summary_path=<abs>`.
 These are this step's two named writes, so

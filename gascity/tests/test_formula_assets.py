@@ -4482,6 +4482,7 @@ description = "Override sink that writes the base triage report contract."
             [
                 "build-artifact-valid.sh",
                 "design-review-approved.sh",
+                "do-work-delivered.sh",
                 "gap-analysis-approved.sh",
                 "implementation-review-approved.sh",
             ],
@@ -4530,6 +4531,7 @@ description = "Override sink that writes the base triage report contract."
             {
                 "build-artifact-valid.sh",
                 "design-review-approved.sh",
+                "do-work-delivered.sh",
                 "implementation-review-approved.sh",
             },
         )

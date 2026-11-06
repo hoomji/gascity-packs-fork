@@ -55,9 +55,33 @@ root, not the implementation worktree. If the source anchor `work_dir` (or,
 in the unstamped single-item case above, the input convoy's) is missing, equals the launcher root, or points at a worktree without the
 implementation commit, fail this step instead of closing the source anchor.
 
+Delivery: require_delivery is `{{require_delivery}}`. When it is `true` and the
+root has no `gc.drain_control_id` (a drain item's delivery belongs to the
+workflow that drained it), the lane's commit must have left the host before you
+close the source anchor: `git -C <work_dir> fetch origin`, then the worktree
+HEAD must be on an origin branch other than `{{base_branch}}` (the remote
+default branch when empty) per `git -C <work_dir> branch -r --contains HEAD`,
+or in an open or merged PR per `gh pr list --state all --search <HEAD sha>`.
+If it is not, fail this step with `gc.failure_class=undelivered` and leave the
+source anchor open. The exec check `do-work-delivered.sh` runs the same test
+after you close this step and keeps the step from passing either way.
+
 If the source anchor is already `status=closed` with `gc.outcome=pass` (a retry
 of this step after the close landed), do not close it again; verify the
 evidence and close this step.
+
+Every path above that fails this step leaves the source anchor open. This step's
+named writes are the source-anchor close on success and, on failure, one write
+to the workflow root, so
+nothing here conflicts with "update or close only your claimed bead".
+Before you close this step failed, run that root write:
+`gc bd update <root-bead-id> --set-metadata gc.work_outcome=blocked`. A drain
+wires the item workflows of the anchors that depend on this one to this root,
+and gc's readiness treats a closed blocker with `gc.work_outcome=blocked` as
+unsatisfied, so those items stay out of `gc ready` instead of starting on an
+anchor whose blocker never closed (gl-c2tps2, 2026-11-05: this root closed
+`gc.outcome=fail` with its anchor gl-10egi9 open, which released the dependent
+item for gl-thh95d). Never write it on success.
 
 On success, close only `<source-anchor-id>` with `gc.outcome=pass`. Include the
 verified commit and summary path in the source-anchor close reason. Read the
