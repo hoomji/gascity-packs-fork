@@ -6,6 +6,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+import time
 import tomllib
 import unittest
 
@@ -4220,6 +4221,7 @@ class FormulaAssetTests(unittest.TestCase):
                     "interaction_mode",
                     "review_mode",
                     "post_mode",
+                    "reviewer_claim_timeout",
                 },
             ),
             "github-issue-fix": (
@@ -4444,6 +4446,179 @@ class FormulaAssetTests(unittest.TestCase):
     def test_pr_review_report_check_exits_75_when_gc_is_unreachable(self) -> None:
         result = self._run_pr_review_report_check(root_meta=None)
         self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+
+    def test_github_pr_review_fails_fast_without_reviewer_capacity(self) -> None:
+        # 2026-11-05: write-report sat unclaimed ~6 h behind an agent whose provider was red
+        # with no fallback, and run-review waited on it. The wait must ask the capacity verdict
+        # and end the check loop with a hard class, the only class gc's loop stops on at once.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        data = tomllib.loads((root / "formulas" / "github-pr-review.formula.toml").read_text(encoding="utf-8"))
+        self.assertEqual(data["vars"]["reviewer_claim_timeout"].get("default"), "20m")
+        run_review = (root / "assets" / "workflows" / "github-pr-review" / "run-review.md").read_text(encoding="utf-8")
+        for fragment in (
+            "{{pack_root}}/assets/scripts/review_capacity.py <review-root-id>",
+            '--claim-timeout "{{reviewer_claim_timeout}}"',
+            "gc.failure_class=hard",
+            "gc.github.review_failure_class=reviewer_capacity",
+            "reviewer_capacity:",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, run_review)
+        self.assertTrue(os.access(root / "assets" / "scripts" / "review_capacity.py", os.X_OK))
+
+    def _run_review_capacity(
+        self,
+        *,
+        health: list[dict] | None = None,
+        sessions: list[dict] | None = None,
+        agent: dict | None = None,
+        rows: list[dict] | None = None,
+        claim_timeout: str = "20m",
+        agent_defaults: dict | None = None,
+        step_age_s: float = 60,
+        gc_down: bool = False,
+    ) -> tuple[subprocess.CompletedProcess, dict]:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        script = root / "assets" / "scripts" / "review_capacity.py"
+        now = time.time()
+        created = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - step_age_s))
+        if rows is None:
+            rows = [{
+                "id": "rv-2", "created_at": created,
+                "metadata": {"gc.root_bead_id": "rv", "gc.step_id": "write-report",
+                             "gc.routed_to": "app/gc.implementation-reviewer"},
+            }]
+        if agent is None:
+            agent = {"name": "implementation-reviewer", "dir": "app", "provider": "codex-terra-high",
+                     "fallback_providers": []}
+        config = "[workspace]\nprovider = \"claude\"\n\n[[agent]]\n" + "".join(
+            f"{k} = {json.dumps(v)}\n" for k, v in agent.items()
+        )
+        if agent_defaults:
+            config += "\n[agent_defaults]\n" + "".join(f"{k} = {json.dumps(v)}\n" for k, v in agent_defaults.items())
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            (tmp / ".gc" / "cache").mkdir(parents=True)
+            if health is not None:
+                (tmp / ".gc" / "cache" / "provider-health.json").write_text(
+                    json.dumps({"providers": [{"probed_at": now, **rec} for rec in health]}), encoding="utf-8")
+            (tmp / "ready.json").write_text(json.dumps(rows), encoding="utf-8")
+            (tmp / "sessions.json").write_text(json.dumps({"ok": True, "sessions": sessions or []}), encoding="utf-8")
+            (tmp / "config.toml").write_text(config, encoding="utf-8")
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            fake_gc = bin_dir / "gc"
+            fake_gc.write_text(
+                "#!/usr/bin/env bash\n"
+                "[ -n \"${GC_DOWN:-}\" ] && exit 1\n"
+                "[ \"$1\" = --city ] && shift 2\n"
+                "echo \"$*\" >> \"$FAKE/calls\"\n"
+                "case \"$1 $2\" in\n"
+                "  \"ready --metadata-field\") cat \"$FAKE/ready.json\" ;;\n"
+                "  \"session list\") cat \"$FAKE/sessions.json\" ;;\n"
+                "  \"config show\") cat \"$FAKE/config.toml\" ;;\n"
+                "  *) exit 2 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_gc.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "FAKE": str(tmp),
+                "GC_CITY_PATH": str(tmp),
+            }
+            if gc_down:
+                env["GC_DOWN"] = "1"
+            result = subprocess.run(
+                [str(script), "rv", "--claim-timeout", claim_timeout],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            calls = (tmp / "calls").read_text(encoding="utf-8") if (tmp / "calls").exists() else ""
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        out["_calls"] = calls
+        return result, out
+
+    def test_review_capacity_holds_when_every_provider_of_the_routed_agent_is_red(self) -> None:
+        result, out = self._run_review_capacity(
+            # Probed an hour ago: only `until` keeps the record live, as in gc's liveAt.
+            health=[{"provider": "codex-terra-high", "status": "unhealthy", "until": time.time() + 86400,
+                     "probed_at": time.time() - 3600, "reason": "quota spent until 2026-11-11"}],
+        )
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertEqual(out["verdict"], "hold")
+        self.assertEqual(out["failure_class"], "reviewer_capacity")
+        self.assertTrue(out["reason"].startswith("reviewer_capacity: "), out["reason"])
+        for fragment in ("rv-2", "app/gc.implementation-reviewer", "codex-terra-high", "quota spent until 2026-11-11"):
+            self.assertIn(fragment, out["reason"])
+        # The ready query is scoped to this review's own steps.
+        self.assertIn("gc.root_bead_id=rv", out["_calls"])
+
+    def test_review_capacity_holds_once_unclaimed_past_the_timeout_with_zero_sessions(self) -> None:
+        result, out = self._run_review_capacity(health=[], step_age_s=25 * 60)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("unclaimed for 25m", out["reason"])
+        self.assertIn("claim timeout 20m", out["reason"])
+
+    def test_review_capacity_waits_while_the_review_can_still_be_served(self) -> None:
+        red = {"provider": "codex-terra-high", "status": "unhealthy", "until": time.time() + 86400}
+        reviewer = {"name": "implementation-reviewer", "dir": "app", "provider": "codex-terra-high"}
+        cases = {
+            "a fallback is healthy": dict(
+                health=[red, {"provider": "claude-sonnet-high", "status": "healthy"}],
+                agent={**reviewer, "fallback_providers": ["claude-sonnet-high"]},
+            ),
+            "an agent with a start_command runs no provider": dict(
+                health=[red], agent={**reviewer, "start_command": "run-reviewer"},
+            ),
+            "a stale red record fails open": dict(
+                health=[{"provider": "codex-terra-high", "status": "unhealthy", "probed_at": time.time() - 3600}],
+            ),
+            "a live session will claim it": dict(
+                health=[red], sessions=[{"id": "s1", "state": "active", "closed": False}], step_age_s=3 * 3600,
+            ),
+            "under the claim timeout": dict(health=[], step_age_s=19 * 60),
+            "timeout 0 disables the age arm": dict(health=[], step_age_s=3 * 3600, claim_timeout="0"),
+            "control beads are not reviewer work": dict(
+                health=[red],
+                rows=[{"id": "rv-3", "created_at": "2026-11-05T00:00:00Z",
+                       "metadata": {"gc.kind": "ralph", "gc.routed_to": "app/gc.implementation-reviewer"}}],
+            ),
+            "the step is routed to another agent": dict(
+                health=[red],
+                rows=[{"id": "rv-4", "created_at": "2026-11-05T00:00:00Z",
+                       "metadata": {"gc.routed_to": "app/gc.review-synthesizer"}}],
+                sessions=[{"id": "s2", "state": "asleep", "closed": False}],
+            ),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(case=name):
+                result, out = self._run_review_capacity(**kwargs)
+                self.assertEqual(result.returncode, 0, f"{out} {result.stderr}")
+                self.assertEqual(out["verdict"], "ok")
+
+    def test_review_capacity_reads_the_resolved_fallback_list_only(self) -> None:
+        # `gc config show` already merges [agent_defaults] into each agent and omits an explicit
+        # `fallback_providers = []` (scratch city, 2026-11-05). Re-merging the defaults would turn
+        # the 11-05 opt-out into a phantom healthy fallback and wait out the whole claim timeout.
+        red = {"provider": "codex-terra-high", "status": "unhealthy", "until": time.time() + 86400}
+        result, out = self._run_review_capacity(
+            health=[red, {"provider": "muse-code", "status": "healthy"}],
+            agent={"name": "implementation-reviewer", "dir": "app", "provider": "codex-terra-high"},
+            agent_defaults={"fallback_providers": ["muse-code"]},
+        )
+        self.assertEqual(result.returncode, 3, f"{out} {result.stderr}")
+
+    def test_review_capacity_ignores_dead_sessions(self) -> None:
+        red = {"provider": "codex-terra-high", "status": "unhealthy", "until": time.time() + 86400}
+        dead = [{"id": "s1", "state": "closed", "closed": True}, {"id": "s2", "state": "suspended", "closed": False}]
+        result, out = self._run_review_capacity(health=[red], sessions=dead)
+        self.assertEqual(result.returncode, 3, f"{out} {result.stderr}")
+
+    def test_review_capacity_exits_75_when_gc_is_unreachable(self) -> None:
+        result, out = self._run_review_capacity(gc_down=True)
+        self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+        self.assertEqual(out["verdict"], "unknown")
 
     def test_github_issue_fix_uses_implementation_plan_artifact_contract(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

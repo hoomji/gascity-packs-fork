@@ -66,8 +66,32 @@ keeps at most one live workflow per source bead:
   `gc.failure_reason`.
 
 Wait until the review workflow root (`gc.github.review_root_id`) is closed,
-checking it with `gc bd show <review-root-id> --json`. Do not close this step
-while it is open: the check would find no report and spend an attempt.
+checking it with `gc bd show <review-root-id> --json` about once a minute. Do
+not close this step while it is open: the check would find no report and spend
+an attempt.
+
+On every check of the open review root, including the first one after an exit-3
+relaunch, also ask whether anyone can still serve it:
+
+```bash
+{{pack_root}}/assets/scripts/review_capacity.py <review-root-id> \
+  --claim-timeout "{{reviewer_claim_timeout}}"
+```
+
+- Exit 0: keep waiting.
+- Exit 3 (JSON `verdict` is `hold`): a ready step of the review is routed to an
+  agent with no live session that gc cannot or does not start, either because
+  that agent's provider and every `fallback_providers` entry is red, or because
+  the step stayed unclaimed past `{{reviewer_claim_timeout}}`. Stop waiting.
+  Record `gc bd update <root-bead-id> --set-metadata
+  gc.github.review_failure_class=reviewer_capacity --set-metadata
+  gc.github.review_failure_reason="<JSON reason>"`, then close this step with
+  `gc.outcome=fail`, `gc.failure_class=hard` and `gc.failure_reason` set to the
+  JSON `reason` (it starts `reviewer_capacity:`). A hard class ends this step's
+  check loop at once; `transient` would spend the remaining attempt waiting on
+  the same held agent. Leave the review workflow open for the operator.
+- Exit 75: gc was unreachable and gave no verdict; keep waiting and ask again
+  on the next check.
 
 When the review root has closed and `REPORT_PATH` validates through
 `{{pack_root}}/assets/scripts/github_reports.py review-outcome "$REPORT_PATH"`,
