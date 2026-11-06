@@ -27,15 +27,8 @@ description = "Branch to cut implementation worktrees from and to target when pu
 default = ""
 
 [[steps]]
-id = "prepare-shared-worktree"
-title = "Cut the shared drain worktree"
-metadata = { "gc.run_target" = "gc.run-operator" }
-description_file = "../assets/workflows/same-session-implement/prepare-shared-worktree.md"
-
-[[steps]]
 id = "shared-drain"
 title = "Run core shared drain"
-needs = ["prepare-shared-worktree"]
 metadata = { "gc.run_target" = "{{implementation_target}}" }
 description_file = "../assets/workflows/same-session-implement/shared-drain.md"
 
