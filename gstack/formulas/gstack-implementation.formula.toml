@@ -29,7 +29,7 @@ member_access = "exclusive"
 [[steps]]
 id = "drain-same-session"
 title = "Drain gstack work in one shared session"
-needs = ["prepare-shared-worktree"]
+needs = ["prepare"]
 condition = "{{drain_policy}} == same-session"
 metadata = { "gc.run_target" = "{{implementation_target}}" }
 description_file = "../assets/workflows/gstack-implementation/drain-same-session.md"
