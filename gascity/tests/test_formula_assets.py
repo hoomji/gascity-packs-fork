@@ -4900,17 +4900,21 @@ description = "Override sink that writes the base triage report contract."
                 with self.subTest(label=label, fragment=fragment):
                     self.assertIn(fragment, text)
 
+    def _github_step(self, root: pathlib.Path, formula: str, step_id: str) -> str:
+        data = resolve_formula(root, formula)
+        return node_description(root, next(step for step in data["steps"] if step["id"] == step_id))
+
+    GITHUB_GATES = (
+        ("github-pr-review", "human-gate-comment"),
+        ("github-issue-triage", "human-gate-sensitive-output"),
+    )
+
     def test_github_no_op_gate_stamps_the_workflow_root(self) -> None:
         # gp-mzit8: post-comment reads gc.github.public_comment_gate from the workflow root,
         # so a no-op gate that stamps only its own step bead hard-stops every auto post.
         root = pathlib.Path(__file__).resolve().parents[1]
-        for formula, gate_id in (
-            ("github-pr-review", "human-gate-comment"),
-            ("github-issue-triage", "human-gate-sensitive-output"),
-        ):
-            data = resolve_formula(root, formula)
-            gate = next(step for step in data["steps"] if step["id"] == gate_id)
-            text = node_description(root, gate)
+        for formula, gate_id in self.GITHUB_GATES:
+            text = self._github_step(root, formula, gate_id)
             with self.subTest(formula=formula):
                 self.assertIn(
                     "gc bd update <root-bead-id> --set-metadata gc.github.public_comment_gate=not_required",
@@ -4918,17 +4922,36 @@ description = "Override sink that writes the base triage report contract."
                 )
                 self.assertIn("not on this step bead", text)
 
-    def test_github_finalize_never_passes_without_a_posted_comment(self) -> None:
-        # gp-mzit8: the root closed gc.outcome=pass although post-comment hard-stopped.
+    def test_github_only_an_exact_auto_post_mode_skips_the_human_gate(self) -> None:
+        # Once the no-op stamp works, a typo such as post_mode=human-gate must not fail open.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for formula, gate_id in self.GITHUB_GATES:
+            gate = self._github_step(root, formula, gate_id)
+            snapshot = self._github_step(root, formula, "snapshot")
+            with self.subTest(formula=formula):
+                self.assertIn("is exactly `auto`, this is a no-op gate", gate)
+                self.assertIn("neither `auto` nor `human_gate`, do not stamp the gate", gate)
+                self.assertIn("must be exactly `auto` or", snapshot)
+                self.assertIn("invalid-post-mode:{{post_mode}}", snapshot)
+
+    def test_github_finalize_never_passes_without_a_comment_posted_this_run(self) -> None:
+        # gp-mzit8: the root closed gc.outcome=pass although post-comment hard-stopped. A comment
+        # id left by the reuse step or an earlier run must not satisfy finalize either.
         root = pathlib.Path(__file__).resolve().parents[1]
         for formula in ("github-pr-review", "github-issue-triage"):
-            data = resolve_formula(root, formula)
-            finalize = next(step for step in data["steps"] if step["id"] == "finalize")
-            text = node_description(root, finalize)
+            snapshot = self._github_step(root, formula, "snapshot")
+            post = self._github_step(root, formula, "post-comment")
+            finalize = self._github_step(root, formula, "finalize")
             with self.subTest(formula=formula):
-                self.assertIn("gc.github.final_comment_posted=false", text)
-                self.assertIn("gc.outcome=fail", text)
-                self.assertIn("Never record `gc.outcome=pass`", text)
+                self.assertIn("gc.github.comment_posted_this_run=false", snapshot)
+                self.assertIn("gc.github.comment_posted_this_run=true", post)
+                self.assertIn("Only this step writes `comment_posted_this_run`", post)
+                self.assertIn("gc.github.comment_posted_this_run=true", finalize)
+                self.assertIn("gc.github.final_comment_posted=false", finalize)
+                self.assertIn("Never record `gc.outcome=pass` while that key is missing", finalize)
+                # graph.v2 workflow-finalize closes the root from the sink step's outcome.
+                self.assertIn("do not close the root", finalize)
+                self.assertNotIn("this step and the workflow\nroot with", finalize)
 
     def test_all_declared_formula_vars_are_rendered_into_graph_text(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

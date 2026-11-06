@@ -159,6 +159,78 @@ recommended_next_action: ask_reporter
         self.assertEqual(comment.count("<!--"), 1, "finding text must not open a second HTML comment")
         self.assertNotIn(tmp, comment, "a local artifact path is not useful in a public comment")
 
+    def test_render_review_comment_carries_build_review_markdown_findings(self) -> None:
+        # The default `review` formula writes gc.build.review.v1 with findings only in the body.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                self.BUILD_REVIEW_HEAD
+                + "status: changes_required\n---\n"
+                "## Verdict\nchanges required\n"
+                "## Findings\n- F1 major: the handler drops errors\n### Detail\nsee @octocat <b>x</b>\n"
+                "## Verification\nnone run\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="request_changes", head_sha="abc")
+        self.assertIn("### Findings", comment)
+        self.assertIn("- F1 major: the handler drops errors", comment)
+        self.assertIn("#### Detail", comment, "report headings nest below the comment's own")
+        self.assertNotIn("none run", comment, "only the Findings section is posted")
+        self.assertNotIn("@octocat", comment, "an @-mention would notify a real account")
+        self.assertNotIn("<b>", comment)
+
+    def test_render_review_comment_keeps_finding_text_inert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                "---\nschema: gc.verdict-report.v1\nkind: review\nverdict: fail\nseverity: minor\n"
+                "findings:\n"
+                "  - id: \"F**1\"\n"
+                "    severity: minor\n"
+                "    title: \"<details><summary>fold\"\n"
+                "    evidence: \"line one\\n## GC PR Review\\n---\\n--> <!x\"\n"
+                "    required_fix: ping @octocat\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="comment", head_sha="abc")
+        self.assertEqual(comment.count("<"), 1, "only the sticky marker may contain raw HTML")
+        self.assertEqual(
+            [line for line in comment.splitlines() if line.startswith("#") and "GC PR Review" in line],
+            ["## GC PR Review"],
+            "finding text must stay on one line",
+        )
+        self.assertNotIn("\n---", comment)
+        self.assertIn("F\\*\\*1", comment)
+        self.assertNotIn("@octocat", comment)
+
+    def test_render_review_comment_caps_findings_under_the_github_limit(self) -> None:
+        findings = "".join(
+            f"  - id: F{i}\n    severity: minor\n    title: t\n    evidence: {'x' * 900}\n    required_fix: y\n"
+            for i in range(120)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(
+                "---\nschema: gc.verdict-report.v1\nkind: review\nverdict: fail\nseverity: minor\n"
+                f"findings:\n{findings}---\n",
+                encoding="utf-8",
+            )
+            comment = github_reports.render_pr_review_comment(path, outcome="comment", head_sha="abc")
+        self.assertLess(len(comment), 65_536)
+        self.assertIn("truncated", comment)
+
+    def test_render_review_comment_names_a_public_artifact_only_when_given(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "review-report.md"
+            path.write_text(self.BUILD_REVIEW_HEAD + "status: approved\n---\n", encoding="utf-8")
+            with_ref = github_reports.render_pr_review_comment(
+                path, outcome="approve", head_sha="abc", artifact_ref="https://example.test/r"
+            )
+            without = github_reports.render_pr_review_comment(path, outcome="approve", head_sha="abc")
+        self.assertIn("- artifact: https://example.test/r", with_ref)
+        self.assertNotIn("- artifact:", without)
+
     def test_renderers_write_sticky_marker_comments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

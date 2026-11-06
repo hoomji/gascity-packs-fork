@@ -10,7 +10,10 @@ Resolved post mode: {{post_mode}}
 Methodology compatibility gate. Validate mode inputs before snapshot work:
 `interaction_mode` {{interaction_mode}} must be `interactive`, `autonomous`,
 or `headless`; `review_mode` {{review_mode}} must be `report`, `agent`, or
-`interactive`. Read the selected code-review formula's compatibility metadata
+`interactive`; `post_mode` {{post_mode}} must be exactly `auto` or
+`human_gate` (any other value blocks with
+`gc.blocked_reason=invalid-post-mode:{{post_mode}}`, so a typo never skips the
+human gate). Read the selected code-review formula's compatibility metadata
 with `gc formula show {{code_review_formula}} --json` and inspect
 `[metadata.gc.methodology]`. When the formula declares that metadata, the
 requested review mode must be listed in `review_modes` and the requested
@@ -75,6 +78,6 @@ small stable index, and artifact files hold large payloads.
 - Resolve the current head-SHA review directory with
   `{{pack_root}}/assets/scripts/artifacts.py path --override "{{artifact_root}}" --relative "/github/pulls/<owner>/<repo>/<number>/reviews/<head-sha>/" --mkdir-parents --directory`.
 - Update the workflow root metadata with:
-  `gc bd update <root-bead-id> --set-metadata gc.github.source_bead_id=<source-bead-id> --set-metadata gc.github.kind=pull --set-metadata gc.github.repo=<owner>/<repo> --set-metadata gc.github.number=<number> --set-metadata gc.github.url=<canonical_url> --set-metadata gc.github.head_sha=<head_sha> --set-metadata gc.github.snapshot_path=<absolute source.json path> --set-metadata gc.github.review_dir=<absolute review directory> --set-metadata gc.github.artifact_root=<absolute artifact root> --set-metadata gc.github.context_path={{context_path}} --set-metadata gc.github.post_mode={{post_mode}} --set-metadata gc.github.reused_current_output=false`.
+  `gc bd update <root-bead-id> --set-metadata gc.github.source_bead_id=<source-bead-id> --set-metadata gc.github.kind=pull --set-metadata gc.github.repo=<owner>/<repo> --set-metadata gc.github.number=<number> --set-metadata gc.github.url=<canonical_url> --set-metadata gc.github.head_sha=<head_sha> --set-metadata gc.github.snapshot_path=<absolute source.json path> --set-metadata gc.github.review_dir=<absolute review directory> --set-metadata gc.github.artifact_root=<absolute artifact root> --set-metadata gc.github.context_path={{context_path}} --set-metadata gc.github.post_mode={{post_mode}} --set-metadata gc.github.reused_current_output=false --set-metadata gc.github.comment_posted_this_run=false`.
 
 Only `gc.github.head_sha` controls head-SHA-keyed PR review reuse.
