@@ -16,6 +16,7 @@ Launch inputs:
 - interaction_mode: {{interaction_mode}}
 - review_mode: {{review_mode}}
 - post_mode: {{post_mode}}
+- reviewer_claim_timeout: {{reviewer_claim_timeout}}
 """
 formula = "github-pr-review"
 version = 1
@@ -55,6 +56,10 @@ default = "report"
 description = "Comment posting policy: human_gate or auto."
 default = "human_gate"
 
+[vars.reviewer_claim_timeout]
+description = "How long a ready step of the launched review may stay unclaimed with zero sessions of its routed agent before run-review fails fast as reviewer_capacity (Go-style duration: 20m, 1h30m; 0 disables this arm). A routed agent whose provider and every fallback_providers entry is red fails at once, whatever this says."
+default = "20m"
+
 [[steps]]
 id = "snapshot"
 title = "Snapshot GitHub PR"
@@ -74,6 +79,22 @@ title = "Run generic review"
 needs = ["reuse-current-head"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/github-pr-review/run-review.md"
+
+# Done is a verdict, not the agent's call: the root must record a validated
+# review report under this head's review dir. A "not yet" spends one attempt;
+# the next attempt may launch a fresh review only after the earlier one closed,
+# because gc refuses a second live workflow on the same source bead.
+# No reviewer capacity is terminal, not a "not yet": while waiting, the step
+# polls review_capacity.py and, on a hold, closes gc.outcome=fail with
+# gc.failure_class=hard, which gc's check loop ends on in one attempt without
+# running the check (formula-spec-v2 section 3.1, "A hard failure ends the loop").
+[steps.check]
+max_attempts = 2
+
+[steps.check.check]
+mode = "exec"
+path = "../assets/scripts/checks/pr-review-report-valid.sh"
+timeout = "2m"
 
 [[steps]]
 id = "render-comment"
