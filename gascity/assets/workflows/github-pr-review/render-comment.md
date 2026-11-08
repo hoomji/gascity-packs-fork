@@ -9,11 +9,15 @@ If workflow root metadata has `gc.github.reused_current_output=true`, validate
 that `gc.github.comment_path` points to an existing `comment.md` under
 `gc.github.review_dir`, verify the review report still maps to the stored
 `gc.github.review_outcome`, close this step with `gc.outcome=pass`, and do not
-rewrite the rendered comment. Exception: when the stored `comment.md` has no
-`### Findings` section but the report has findings, or carries a `- artifact:`
-line with a local filesystem path, it came from an older renderer; re-render it
-as below. This keeps the reused current-head artifact as a
-real no-op path.
+rewrite the rendered comment. Exception: decide it with
+`{{pack_root}}/assets/scripts/github_reports.py review-comment-current <review-report.md> <comment.md>`,
+which prints `{"current": true|false, "reason": ...}`. When `current` is false
+(no `### Findings` section although the report has findings, a `- artifact:`
+line with a local filesystem path, or any other drift from the report), the
+comment came from an older renderer; re-render it as below and close with
+`gc.outcome=pass`. A stale stored comment is never a reason to fail this step.
+When `current` is true, leave it alone. This keeps the reused current-head
+artifact as a real no-op path.
 
 Render the normal PR comment to `<gc.github.review_dir>/comment.md` with
 `{{pack_root}}/assets/scripts/github_reports.py render-review-comment`, passing

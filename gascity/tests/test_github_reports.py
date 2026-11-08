@@ -550,6 +550,68 @@ recommended_next_action: ask_reporter
                 artifact_ref="artifact\n- forged: yes",
             )
 
+    # PR 8180 (2026-11-06): a reused head whose stored comment.md came from the older renderer
+    # (no Findings section, local report path as the artifact) while the report carries F1-F3.
+    STALE_REUSED_COMMENT = (
+        "<!-- gc:github-pr-review head_sha=abc123 outcome=approve -->\n"
+        "## GC PR Review\n\n- outcome: approve\n- report: pass/none\n- gate: not human approved\n"
+        "- artifact: {report}\n"
+    )
+
+    def _reused_head(self, tmp: str, comment: str) -> tuple[pathlib.Path, pathlib.Path]:
+        report = pathlib.Path(tmp) / "review-report.md"
+        report.write_text(
+            self.BUILD_REVIEW_HEAD + "status: approved\n---\n"
+            "## Verdict\nadvisory\n## Findings\n### F1 (minor): stale comment\nreword it\n## Verification\nnone\n",
+            encoding="utf-8",
+        )
+        stored = pathlib.Path(tmp) / "comment.md"
+        stored.write_text(comment.format(report=report), encoding="utf-8")
+        return report, stored
+
+    def _review_comment_current_cli(self, report: pathlib.Path, stored: pathlib.Path) -> dict:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = github_reports.main(["review-comment-current", str(report), str(stored)])
+        self.assertEqual(code, 0, err.getvalue())
+        return json.loads(out.getvalue())
+
+    def test_review_comment_current_flags_the_older_renderer_comment_as_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report, stored = self._reused_head(tmp, self.STALE_REUSED_COMMENT)
+            result = self._review_comment_current_cli(report, stored)
+            self.assertFalse(result["current"])
+            self.assertIn("local filesystem path", result["reason"])
+
+            # A path-free comment that still lacks the findings is stale for the other reason.
+            stored.write_text(self.STALE_REUSED_COMMENT.replace("- artifact: {report}\n", ""), encoding="utf-8")
+            result = self._review_comment_current_cli(report, stored)
+            self.assertFalse(result["current"])
+            self.assertIn("lacks the report's findings", result["reason"])
+
+    def test_review_comment_current_accepts_what_the_renderer_produces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report, stored = self._reused_head(tmp, self.STALE_REUSED_COMMENT)
+            for kwargs in ({}, {"artifact_ref": "https://example.test/r"}, {"human_approved": True}):
+                with self.subTest(**kwargs):
+                    stored.write_text(
+                        github_reports.render_pr_review_comment(report, outcome="approve", head_sha="abc123", **kwargs),
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(self._review_comment_current_cli(report, stored)["current"])
+
+    def test_review_comment_current_flags_a_comment_that_drifted_from_its_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report, stored = self._reused_head(tmp, self.STALE_REUSED_COMMENT)
+            rendered = github_reports.render_pr_review_comment(report, outcome="approve", head_sha="abc123")
+            stored.write_text(rendered.replace("reword it", "something else"), encoding="utf-8")
+            result = self._review_comment_current_cli(report, stored)
+            self.assertFalse(result["current"])
+            self.assertIn("differs", result["reason"])
+
+            stored.write_text("## GC PR Review\n", encoding="utf-8")
+            self.assertIn("no gc:github-pr-review marker", self._review_comment_current_cli(report, stored)["reason"])
+
     def test_cli_reports_malformed_triage_yaml_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report = pathlib.Path(tmp) / "triage.md"

@@ -4343,6 +4343,8 @@ class FormulaAssetTests(unittest.TestCase):
             "gc.github.reused_current_output=true",
             "do not\nrewrite the rendered comment",
             "real no-op path",
+            "review-comment-current",
+            "A stale stored comment is never a reason to fail this step",
         ):
             with self.subTest(step="render-comment", fragment=fragment):
                 self.assertIn(fragment, render_comment)
