@@ -215,6 +215,40 @@ def render_pr_review_comment(
     return "\n".join(lines) + "\n"
 
 
+COMMENT_MARKER_RE = re.compile(r"\A<!-- gc:github-pr-review head_sha=(?P<head>\S*) outcome=(?P<outcome>\S+) -->\n")
+COMMENT_ARTIFACT_RE = re.compile(r"^- artifact: (?P<ref>.*)$", re.MULTILINE)
+PUBLIC_ARTIFACT_REF_RE = re.compile(r"\Ahttps?://\S+\Z")
+
+
+def review_comment_staleness(report_path: Path, comment_path: Path) -> str:
+    """Return why a stored review comment must be re-rendered from its report, or "" when current.
+
+    The reuse-current-head path keeps a stored comment.md untouched only when re-rendering the report
+    would reproduce it. An older renderer dropped the findings and named a local report path as the
+    artifact (PR 8180, 2026-11-06); both read as stale here.
+    """
+    comment = comment_path.read_text(encoding="utf-8")
+    marker = COMMENT_MARKER_RE.match(comment)
+    if not marker:
+        return "comment has no gc:github-pr-review marker"
+    artifact = COMMENT_ARTIFACT_RE.search(comment)
+    artifact_ref = artifact.group("ref").strip() if artifact else ""
+    if artifact_ref and not PUBLIC_ARTIFACT_REF_RE.match(artifact_ref):
+        return "comment names a local filesystem path as its artifact"
+    expected = render_pr_review_comment(
+        report_path,
+        outcome=marker.group("outcome"),
+        head_sha=marker.group("head"),
+        artifact_ref=artifact_ref,
+        human_approved="- gate: human approved\n" in comment,
+    )
+    if comment != expected:
+        if "### Findings" in expected and "### Findings" not in comment:
+            return "comment lacks the report's findings"
+        return "comment differs from the report's current rendering"
+    return ""
+
+
 def markdown_findings_section(text: str) -> str:
     match = FRONT_MATTER_RE.match(text)
     body = text[match.end():] if match else text
@@ -461,6 +495,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     review_comment_parser.add_argument("--artifact-ref", default="")
     review_comment_parser.add_argument("--human-approved", action="store_true")
 
+    current_parser = subparsers.add_parser("review-comment-current")
+    current_parser.add_argument("report_path", type=Path)
+    current_parser.add_argument("comment_path", type=Path)
+
     triage_comment_parser = subparsers.add_parser("render-triage-comment")
     triage_comment_parser.add_argument("report_path", type=Path)
     triage_comment_parser.add_argument("--output", type=Path, required=True)
@@ -505,6 +543,9 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
             output = {"ok": True, "outcome": outcome, "output": str(args.output)}
+        elif args.command == "review-comment-current":
+            reason = review_comment_staleness(args.report_path, args.comment_path)
+            output = {"ok": True, "current": not reason, "reason": reason}
         elif args.command == "render-triage-comment":
             args.output.write_text(
                 render_triage_comment(
