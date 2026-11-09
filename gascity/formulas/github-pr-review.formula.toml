@@ -117,6 +117,17 @@ needs = ["render-comment", "human-gate-comment"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/github-pr-review/post-comment.md"
 
+# 2026-11-09: a timed-out comment lookup closed an approve review fail with nothing
+# posted (promotion #8618). A transient failure leaves comment_posted_this_run unset,
+# so the check reruns the step; a refused gate closes hard and ends the loop.
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "../assets/scripts/checks/pr-comment-posted.sh"
+timeout = "2m"
+
 [[steps]]
 id = "finalize"
 title = "Finalize PR review result"

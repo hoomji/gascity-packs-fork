@@ -4449,6 +4449,90 @@ class FormulaAssetTests(unittest.TestCase):
         result = self._run_pr_review_report_check(root_meta=None)
         self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
 
+    def test_github_pr_review_post_comment_retries_on_an_exec_check(self) -> None:
+        # 2026-11-09: a timed-out comment lookup closed an approve review fail (promotion #8618).
+        root = pathlib.Path(__file__).resolve().parents[1]
+        data = tomllib.loads((root / "formulas" / "github-pr-review.formula.toml").read_text(encoding="utf-8"))
+        post = next(step for step in data["steps"] if step["id"] == "post-comment")
+        check = post.get("check") or {}
+        self.assertEqual(check.get("max_attempts"), 3)
+        self.assertEqual(
+            check.get("check"),
+            {"mode": "exec", "path": "../assets/scripts/checks/pr-comment-posted.sh", "timeout": "2m"},
+        )
+        prompt = (root / "assets" / "workflows" / "github-pr-review" / "post-comment.md").read_text(encoding="utf-8")
+        for fragment in ("gc.failure_class=transient", "a failed lookup never means", "pr-comment-posted.sh"):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, prompt)
+
+    def _run_pr_comment_posted_check(self, root_meta: dict | None) -> subprocess.CompletedProcess:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        script = root / "assets" / "scripts" / "checks" / "pr-comment-posted.sh"
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            beads = {
+                "step": {"id": "step", "metadata": {"gc.root_bead_id": "wfroot"}},
+                "wfroot": {"id": "wfroot", "metadata": {k: v for k, v in (root_meta or {}).items() if v is not None}},
+            }
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            show_dir = tmp / "show"
+            show_dir.mkdir()
+            for bead, payload in beads.items():
+                (show_dir / f"{bead}.json").write_text(json.dumps([payload]), encoding="utf-8")
+            fake_gc = bin_dir / "gc"
+            fake_gc.write_text(
+                "#!/usr/bin/env bash\n"
+                "[ -n \"${GC_DOWN:-}\" ] && exit 1\n"
+                "[ \"$1 $2\" = \"bd show\" ] || exit 2\n"
+                "cat \"$BD_SHOW_DIR/$3.json\"\n",
+                encoding="utf-8",
+            )
+            fake_gc.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "BD_SHOW_DIR": str(show_dir),
+                "GC_BEAD_ID": "step",
+            }
+            if root_meta is None:
+                env["GC_DOWN"] = "1"
+            return subprocess.run([str(script)], env=env, text=True, capture_output=True, check=False)
+
+    POSTED_META = {
+        "gc.github.comment_posted_this_run": "true",
+        "gc.github.comment_id": "6741240606",
+        "gc.github.comment_url": "https://github.com/o/r/pull/1#issuecomment-6741240606",
+    }
+
+    def test_pr_comment_posted_check_passes_a_comment_posted_this_run(self) -> None:
+        for name, meta in {"string flag": self.POSTED_META,
+                           "bool flag": {**self.POSTED_META, "gc.github.comment_posted_this_run": True},
+                           # gc records comment_id as a JSON number (gl-tat6cf, 2026-11-09).
+                           "numeric comment id": {**self.POSTED_META, "gc.github.comment_id": 6741240606}}.items():
+            with self.subTest(case=name):
+                result = self._run_pr_comment_posted_check(meta)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("issuecomment-6741240606", result.stdout)
+
+    def test_pr_comment_posted_check_says_not_yet(self) -> None:
+        cases = {
+            # The #8618 shape: an earlier comment id is left over, but this run posted nothing.
+            "lookup timed out, nothing posted": {**self.POSTED_META, "gc.github.comment_posted_this_run": "false"},
+            "flag never written": {**self.POSTED_META, "gc.github.comment_posted_this_run": None},
+            "no comment id": {**self.POSTED_META, "gc.github.comment_id": None},
+            "no comment url": {**self.POSTED_META, "gc.github.comment_url": None},
+        }
+        for name, meta in cases.items():
+            with self.subTest(case=name):
+                result = self._run_pr_comment_posted_check(meta)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("pr-comment-posted:", result.stderr)
+
+    def test_pr_comment_posted_check_exits_75_when_gc_is_unreachable(self) -> None:
+        result = self._run_pr_comment_posted_check(None)
+        self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+
     def test_github_pr_review_fails_fast_without_reviewer_capacity(self) -> None:
         # 2026-11-05: write-report sat unclaimed ~6 h behind an agent whose provider was red
         # with no fallback, and run-review waited on it. The wait must ask the capacity verdict
@@ -4981,6 +5065,7 @@ description = "Override sink that writes the base triage report contract."
                 "design-review-approved.sh",
                 "gap-analysis-approved.sh",
                 "implementation-review-approved.sh",
+                "pr-comment-posted.sh",
                 "pr-review-report-valid.sh",
                 "prepare-shared-worktree.sh",
             ],
@@ -5031,6 +5116,7 @@ description = "Override sink that writes the base triage report contract."
                 "design-review-approved.sh",
                 "implementation-review-approved.sh",
                 "prepare-shared-worktree.sh",
+                "pr-comment-posted.sh",
                 "pr-review-report-valid.sh",
             },
         )
