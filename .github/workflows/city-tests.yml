@@ -1,0 +1,40 @@
+name: City branch tests
+
+# The fork's `city` branch is what the hoomji city pins. Upstream's CI workflow
+# runs on `main` only and on a runner this fork does not have, so before this
+# file a `city` PR had no check at all (gh pr checks: none) and one test sat
+# red on the branch unnoticed.
+on:
+  pull_request:
+    branches: [city]
+  push:
+    branches: [city]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: city-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (tests, gascity/tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install PyYAML pytest jsonschema
+
+      - name: Run the tests the city's formulas depend on
+        run: python3 -m pytest tests gascity/tests -q

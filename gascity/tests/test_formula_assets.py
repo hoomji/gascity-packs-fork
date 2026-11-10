@@ -4415,7 +4415,7 @@ class FormulaAssetTests(unittest.TestCase):
             fake_gc.write_text(
                 "#!/usr/bin/env bash\n"
                 "[ -n \"${GC_DOWN:-}\" ] && exit 1\n"
-                "[ \"$1 $2\" = \"bd show\" ] || exit 2\n"
+                "[ \"$1\" = bd ] && [ \"$2\" = show ] || exit 2\n"
                 "cat \"$BD_SHOW_DIR/$3.json\"\n",
                 encoding="utf-8",
             )
@@ -4493,7 +4493,7 @@ class FormulaAssetTests(unittest.TestCase):
             fake_gc.write_text(
                 "#!/usr/bin/env bash\n"
                 "[ -n \"${GC_DOWN:-}\" ] && exit 1\n"
-                "[ \"$1 $2\" = \"bd show\" ] || exit 2\n"
+                "[ \"$1\" = bd ] && [ \"$2\" = show ] || exit 2\n"
                 "cat \"$BD_SHOW_DIR/$3.json\"\n",
                 encoding="utf-8",
             )
