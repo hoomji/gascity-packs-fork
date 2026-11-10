@@ -21,6 +21,11 @@ implementation_strategy = "drain"
 interaction_modes = ["interactive", "autonomous", "headless"]
 review_modes = ["report", "agent", "interactive"]
 
+[vars]
+[vars.pre_publish_command]
+description = "Shell command the lane runs in each implementation worktree after finalize and before the push (formatter/lint --write: rig policy, set as a rig default). Empty disables the pre-publish-fixers step."
+default = ""
+
 [[steps]]
 id = "requirements"
 title = "Generate requirements"
@@ -127,9 +132,22 @@ mode = "exec"
 path = "../assets/scripts/checks/build-artifact-valid.sh"
 timeout = "5m"
 
+# pre-publish-fixers runs the rig's mechanical fixers after finalize and before
+# publish (ci-gouw part 1, owner 2026-11-10). The step is condition-excluded
+# when pre_publish_command is empty, so rigs without a default compile the
+# exact recipe they compiled before; publish keeps its finalize edge for
+# that case.
+[[steps]]
+id = "pre-publish-fixers"
+title = "Run the rig's pre-publish fixers"
+needs = ["finalize"]
+condition = "{{pre_publish_command}}"
+metadata = { "gc.run_target" = "gc.publisher" }
+description_file = "../assets/workflows/build-basic/pre-publish-fixers.md"
+
 [[steps]]
 id = "publish"
 title = "Optionally publish build-basic"
-needs = ["finalize"]
+needs = ["finalize", "pre-publish-fixers"]
 metadata = { "gc.run_target" = "gc.publisher" }
 description_file = "../assets/workflows/build-basic/publish.md"

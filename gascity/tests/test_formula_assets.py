@@ -1973,7 +1973,16 @@ class FormulaAssetTests(unittest.TestCase):
         resolved = resolve_formula(root, "build-basic")
 
         self.assertEqual(data["extends"], ["build-base"])
-        self.assertEqual([step["id"] for step in resolved["steps"]], BUILD_BASE_STEPS)
+        # build-basic adds one step of its own: the rig's pre-publish fixers, excluded at compile
+        # time while pre_publish_command is empty (ci-gouw). A new child step appends after the
+        # parent's; the needs edges below, not the list order, place it between finalize and publish.
+        self.assertEqual([step["id"] for step in resolved["steps"]], BUILD_BASE_STEPS + ["pre-publish-fixers"])
+        fixers = next(step for step in data["steps"] if step["id"] == "pre-publish-fixers")
+        self.assertEqual(fixers["condition"], "{{pre_publish_command}}")
+        self.assertEqual(fixers["needs"], ["finalize"])
+        self.assertEqual(data["vars"]["pre_publish_command"]["default"], "")
+        publish = next(step for step in data["steps"] if step["id"] == "publish")
+        self.assertEqual(publish["needs"], ["finalize", "pre-publish-fixers"])
         self.assertEqual(data["catalog"]["name"], "build-basic")
         review_step = next(step for step in data["steps"] if step["id"] == "review")
         self.assertEqual(review_step["expand"], "build-basic-review")
