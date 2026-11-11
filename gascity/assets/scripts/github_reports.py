@@ -47,12 +47,9 @@ class ValidationError(Exception):
 # The generic `review` formula's write-report step is validated against its artifact schema,
 # gc.build.review.v1 (schemas/build/review.v1.yaml), so its report never carries
 # gc.verdict-report.v1. Read both: verdict fields when the reviewer recorded them, else status.
-BUILD_REVIEW_SCHEMA = "gc.build.review.v1"
-BUILD_REVIEW_STATUS_VERDICTS = {
-    "approved": ("pass", "none"),
-    "changes_required": ("fail", "major"),
-    "blocked": ("fail", "blocker"),
-}
+# The rule lives in validate_verdict_report so the write-report gate applies the same one.
+BUILD_REVIEW_SCHEMA = validate_verdict_report.BUILD_REVIEW_SCHEMA
+BUILD_REVIEW_STATUS_VERDICTS = validate_verdict_report.BUILD_REVIEW_STATUS_VERDICTS
 
 
 def load_review_report(text: str) -> validate_verdict_report.VerdictReport:
@@ -60,22 +57,12 @@ def load_review_report(text: str) -> validate_verdict_report.VerdictReport:
     data = yaml.safe_load(match.group("body")) if match and yaml is not None else None
     if not isinstance(data, dict) or data.get("schema") != BUILD_REVIEW_SCHEMA:
         return validate_verdict_report.validate_report_text(text, expected_kind="review")
-    status = data.get("status")
-    if status not in BUILD_REVIEW_STATUS_VERDICTS:
+    report = validate_verdict_report.validate_build_review_verdict(data)
+    if report is None:
         raise ValidationError(
             f"{BUILD_REVIEW_SCHEMA} status must be one of {sorted(BUILD_REVIEW_STATUS_VERDICTS)} "
-            f"for a finished review, got {status!r}"
+            f"for a finished review, got {data.get('status')!r}"
         )
-    status_verdict, status_severity = BUILD_REVIEW_STATUS_VERDICTS[status]
-    if "verdict" not in data and "severity" not in data:
-        return validate_verdict_report.VerdictReport(
-            schema=BUILD_REVIEW_SCHEMA, kind="review", verdict=status_verdict, severity=status_severity, findings=[]
-        )
-    report = validate_verdict_report.validate_report_data(
-        {**data, "schema": "gc.verdict-report.v1", "kind": data.get("kind") or "review"}, expected_kind="review"
-    )
-    if report.verdict != status_verdict:
-        raise ValidationError(f"status {status!r} contradicts verdict {report.verdict!r}")
     return report
 
 
