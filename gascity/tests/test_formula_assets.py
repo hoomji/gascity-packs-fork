@@ -7562,5 +7562,21 @@ description = "Override sink that writes the base triage report contract."
         self.assertNotIn("gc bd show bd-child failed", result.stderr)
 
 
+class PublishBaseRuleTests(unittest.TestCase):
+    def test_publish_prompts_accept_a_branch_that_is_behind_its_base(self):
+        # ci-cxaw 2026-11-11: "must descend from origin/<base_branch>" was read as "contains the
+        # base tip", so two build-basic lanes cut from trunk refused to publish once trunk moved.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        prompts = sorted((root / "assets" / "workflows").glob("*/publish.md"))
+        with_base_rule = [p for p in prompts if "PR base:" in p.read_text()]
+        self.assertGreaterEqual(len(with_base_rule), 4)
+        for prompt in with_base_rule:
+            text = " ".join(prompt.read_text().split())
+            with self.subTest(prompt=prompt.parent.name):
+                self.assertNotIn("must descend from", text)
+                self.assertIn("merely behind the base tip is publishable", text)
+                self.assertIn("Never fail the publish, rebase, or re-verify only because the base has newer commits", text)
+
+
 if __name__ == "__main__":
     unittest.main()
