@@ -52,6 +52,12 @@ Include the required schema sections:
 Create work-item beads first, then create a new implementation convoy for those
 work units. Do not reuse the source or launch convoy from `gc.var.convoy_id`.
 
+Every work item must end in a commit: the implementation lane closes an item
+only when its worktree holds a commit past the base, and an item that fails
+blocks every item that depends on it. A plan step that changes no file
+(reproduce a baseline, verify, gather PR evidence) is never its own work item;
+fold it into the first item it serves as an acceptance check.
+
 Use the convoy creation flow exactly:
 
 1. Create each work item with `gc bd create ...` and capture the returned work-item

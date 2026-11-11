@@ -2193,6 +2193,13 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(asset="finalize-unattended", fragment=fragment):
                 self.assertIn(fragment, finalize_text)
+        decompose_text = (root / "assets/workflows/build-basic/decompose.md").read_text(encoding="utf-8")
+        for fragment in (
+            "Every work item must end in a commit",
+            "is never its own work item",
+        ):
+            with self.subTest(asset="decompose-no-zero-commit-item", fragment=fragment):
+                self.assertIn(fragment, decompose_text)
         review_fix_text = (
             root / "assets/workflows/build-basic-review/{target}.apply-review-findings.md"
         ).read_text(encoding="utf-8")
