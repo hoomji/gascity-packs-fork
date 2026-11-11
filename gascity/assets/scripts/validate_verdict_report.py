@@ -23,6 +23,24 @@ SEVERITY_ORDER = {"none": 0, "minor": 1, "major": 2, "blocker": 3}
 REQUIRED_FINDING_FIELDS = {"id", "severity", "title", "evidence", "required_fix"}
 
 
+# A gc.build.review.v1 report (the generic `review` formula's artifact) carries its outcome in
+# `status`. `verdict` and `severity` are optional there; when the reviewer writes them they follow
+# this file's vocabulary and must agree with the status. The write-report artifact gate and the
+# github-pr-review adapter both call validate_build_review_verdict, so a report the gate accepts is
+# one the adapter can post.
+BUILD_REVIEW_SCHEMA = "gc.build.review.v1"
+BUILD_REVIEW_STATUS_VERDICTS = {
+    "approved": ("pass", "none"),
+    "changes_required": ("fail", "major"),
+    "blocked": ("fail", "blocker"),
+}
+BUILD_REVIEW_VOCABULARY_HINT = (
+    "in a gc.build.review.v1 report either omit both verdict and severity (status carries the outcome) "
+    "or write verdict: pass with severity: none, or verdict: fail with severity: minor|major|blocker "
+    "equal to the worst entry in a structured findings list"
+)
+
+
 class ValidationError(Exception):
     pass
 
@@ -85,6 +103,32 @@ def validate_report_data(data: dict[str, Any], *, expected_kind: str = "") -> Ve
     if severity != max_severity:
         raise ValidationError(f"severity must be maximum finding severity {max_severity!r}, got {severity!r}")
     return VerdictReport(schema=schema, kind=kind, verdict=verdict, severity=severity, findings=findings)
+
+
+def validate_build_review_verdict(data: dict[str, Any]) -> VerdictReport | None:
+    """Read the outcome of a gc.build.review.v1 front matter.
+
+    Returns None while the review is unfinished (status outside BUILD_REVIEW_STATUS_VERDICTS).
+    """
+    status = data.get("status")
+    if status not in BUILD_REVIEW_STATUS_VERDICTS:
+        return None
+    status_verdict, status_severity = BUILD_REVIEW_STATUS_VERDICTS[status]
+    if "verdict" not in data and "severity" not in data:
+        return VerdictReport(
+            schema=BUILD_REVIEW_SCHEMA, kind="review", verdict=status_verdict, severity=status_severity, findings=[]
+        )
+    try:
+        report = validate_report_data(
+            {**data, "schema": "gc.verdict-report.v1", "kind": data.get("kind") or "review"}, expected_kind="review"
+        )
+    except ValidationError as exc:
+        raise ValidationError(f"{exc}; {BUILD_REVIEW_VOCABULARY_HINT}") from exc
+    if report.verdict != status_verdict:
+        raise ValidationError(
+            f"status {status!r} contradicts verdict {report.verdict!r}; {BUILD_REVIEW_VOCABULARY_HINT}"
+        )
+    return report
 
 
 def required_string(data: dict[str, Any], key: str) -> str:

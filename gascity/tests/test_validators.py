@@ -396,6 +396,50 @@ trace:
                 summary_complete, expected_schema="gc.build.implementation-summary.v1"
             )
 
+    def review_with(self, status: str, extra: str) -> str:
+        return self.valid_artifact("gc.build.review.v1").replace(
+            "\nstatus: approved\n", f"\nstatus: {status}\n{extra}", 1
+        )
+
+    FINDING = "findings:\n  - id: f1\n    severity: minor\n    title: t\n    evidence: e\n    required_fix: r\n"
+
+    def test_review_artifact_refuses_verdict_words_the_pr_adapter_rejects(self) -> None:
+        # Live failures: hoomji/gascity#89 (request_changes/medium) and gascity-packs#69 (pass/minor)
+        # passed this gate and were then dropped by github_reports.py at post time.
+        cases = {
+            "request_changes/medium": ("changes_required", "verdict: request_changes\nseverity: medium\n", "verdict must be pass or fail"),
+            "fail/medium": ("changes_required", "verdict: fail\nseverity: medium\n", "severity must be one of"),
+            "pass/minor": ("approved", "verdict: pass\nseverity: minor\n", "pass reports must use severity: none"),
+            "verdict contradicts status": ("approved", "verdict: fail\nseverity: minor\n" + self.FINDING, "contradicts"),
+            "severity alone": ("changes_required", "severity: major\n", "verdict must be a non-empty string"),
+        }
+        for name, (status, extra, message) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(build_artifact_validator.ValidationError, message) as raised:
+                    build_artifact_validator.validate_artifact_text(
+                        self.review_with(status, extra), expected_schema="gc.build.review.v1"
+                    )
+                self.assertIn("omit both verdict and severity", str(raised.exception))
+
+    def test_review_artifact_accepts_what_the_pr_adapter_posts(self) -> None:
+        import github_reports
+
+        cases = {
+            "status only": ("changes_required", "", "request_changes"),
+            "pass/none": ("approved", "verdict: pass\nseverity: none\n", "approve"),
+            "fail/minor": ("changes_required", "verdict: fail\nseverity: minor\n" + self.FINDING, "comment"),
+        }
+        for name, (status, extra, outcome) in cases.items():
+            with self.subTest(name=name):
+                text = self.review_with(status, extra)
+                build_artifact_validator.validate_artifact_text(text, expected_schema="gc.build.review.v1")
+                report = github_reports.load_review_report(text)
+                self.assertEqual(github_reports.review_outcome(report.verdict, report.severity), outcome)
+
+    def test_unfinished_review_artifact_is_not_judged_on_verdict_words(self) -> None:
+        text = self.review_with("questions", "verdict: undecided\n")
+        build_artifact_validator.validate_artifact_text(text, expected_schema="gc.build.review.v1")
+
     def test_build_artifact_requires_coverage_for_declared_upstream_ids(self) -> None:
         declared = self.valid_artifact().replace(
             "      hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",

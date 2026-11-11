@@ -46,6 +46,7 @@ def validate_artifact_text(text: str, *, expected_schema: str = "") -> BuildArti
     schema = load_schema(schema_id)
     validate_required_front_matter(front_matter, schema)
     validate_status(front_matter, schema)
+    validate_review_verdict(schema_id, front_matter)
     trace = validate_trace(front_matter)
     upstream = validate_upstream(trace)
     coverage = validate_coverage(trace, schema)
@@ -59,6 +60,27 @@ def validate_artifact_text(text: str, *, expected_schema: str = "") -> BuildArti
         upstream=upstream,
         coverage=coverage,
     )
+
+
+def validate_review_verdict(schema_id: str, front_matter: dict[str, Any]) -> None:
+    """Refuse a review report whose verdict/severity the github-pr-review adapter would reject.
+
+    Without this the report passed the write-report gate and the finished review was dropped at
+    post time (verdict: request_changes / severity: medium; verdict: pass with severity: minor).
+    """
+    if "verdict" not in front_matter and "severity" not in front_matter:
+        return
+    try:
+        import validate_verdict_report
+    except ImportError:  # an installed copy without its sibling: the adapter still checks at post time
+        return
+
+    if schema_id != validate_verdict_report.BUILD_REVIEW_SCHEMA:
+        return
+    try:
+        validate_verdict_report.validate_build_review_verdict(front_matter)
+    except validate_verdict_report.ValidationError as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 def parse_front_matter(text: str) -> tuple[str, dict[str, Any], str]:

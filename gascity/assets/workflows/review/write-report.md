@@ -11,6 +11,24 @@ and reason recorded in the report. The interaction posture is
 
 Artifact validation: this step is gated by the pack-owned `build-artifact-valid.sh` check, which validates the report recorded at `gc.build.review_report_path` (fallback `gc.var.report_path`) against schema `gc.build.review.v1`. On repair attempts (`gc.attempt` greater than 1), read the validator errors from `gc.attempt_log` on the validation loop control bead (the dependent of this step bead) and repair the report in place instead of rewriting it. Two bounded repair attempts follow the first failure; exhausting them closes this stage with `gc.outcome=fail` and machine-readable validation errors that block downstream stages. Never ask questions in headless mode; record unresolved ambiguity inside the report.
 
+## Outcome vocabulary
+
+The front-matter `status` carries the review's outcome: `approved`,
+`changes_required` or `blocked`. `verdict` and `severity` are optional; the
+simplest valid report omits both. If you write them, use only these values, or
+the artifact validator refuses the report:
+
+- `verdict: pass` with `severity: none`, only under `status: approved`. An
+  approval with notes is still `pass`/`none`; put the notes in the Findings
+  section.
+- `verdict: fail` with `severity: minor`, `major` or `blocker`, under
+  `status: changes_required` or `status: blocked`, plus a front-matter
+  `findings` list (each entry: `id`, `severity`, `title`, `evidence`,
+  `required_fix`) whose worst severity equals `severity`.
+
+Words such as `request_changes`, `approve`, `medium` or `high` are not
+verdict or severity values.
+
 ## Required artifact location
 
 `{{report_path}}` is relative to the durable rig root, not the current
