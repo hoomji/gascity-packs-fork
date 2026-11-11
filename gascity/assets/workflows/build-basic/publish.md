@@ -1,6 +1,54 @@
 Use the built-in Gas City publish flow.
 
-If publishing is enabled, publish the finalized build-basic result with the existing publish helper. If publishing is disabled, record a no-op publish outcome with the final artifact paths.
+Publishing is enabled when push `{{push}}` or open_pr `{{open_pr}}` is `true`; you publish the finalized build-basic result yourself, with `git` and `gh`, in this step. If both are `false`, publishing is disabled: record a no-op publish outcome with the final artifact paths.
+
+`push=true` and `open_pr=true` are the caller's standing authorization to publish.
+Never wait for, ask for, or record a human "approve publish" in any interaction
+mode, and never close this step unpublished because a final report lists a human
+approval as the next action or because no publish script exists under
+`assets/scripts`: there is none, and this prompt is the publish procedure.
+
+Publish procedure when publishing is enabled:
+
+1. Read `gc.root_bead_id` from your claimed step bead, then the workflow root.
+   Read the implementation convoy id from root metadata `gc.input_convoy_id`,
+   its members from `gc convoy status <convoy-id> --json` `.children`, and each
+   member's `work_dir` metadata. Drop empties and dedupe: these are the
+   implementation worktrees. Hard-fail when there are none.
+2. In every worktree, commit what the build left uncommitted before anything
+   else. Review-fix edits and fixer output are approved work, not a reason to
+   stop:
+
+```bash
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" diff --cached --quiet || git -C "$WORKTREE" commit -m "<what the uncommitted edits did>"
+```
+
+3. One worktree: its branch is the publish branch. Several worktrees (an
+   unstacked decomposition leaves one per task): assemble them onto ONE publish
+   branch. Create a branch from the merge base the task branches share with
+   `origin/<base branch>`, then cherry-pick each task branch's commits past that
+   base (`git cherry-pick <base>..<task-branch>`) in convoy member order. When a
+   pick conflicts, resolve it so both tasks' approved behaviour survives; when
+   that is not possible, abort that pick and fail the publish naming both tasks.
+   Run the proof commands the final report records on the assembled branch; a
+   red result fails the publish with the command and its output.
+4. With `push=true`, push the publish branch to `origin` (never to a protected
+   or base branch, never with `--force`), then confirm
+   `git ls-remote origin <branch>` equals the local head.
+5. With `open_pr=true`, open one PR for the publish branch against the base
+   named under "PR base" below (`gh pr create --base <base> --head <branch>`),
+   with a title and body drawn from the final report. If a PR for that head
+   already exists, reuse it.
+6. Record `gc.publish_outcome=published`, `gc.publish_branch=<branch>`,
+   `gc.publish_head=<full sha>` and, when a PR exists, `gc.pr=<PR url>` on both
+   your claimed step bead and the workflow root, then close with
+   `gc.outcome=pass`.
+
+When any numbered step cannot complete, record `gc.publish_outcome=failed` and
+`gc.publish_error=<one line: the command and what it printed>` on your claimed
+step bead and the workflow root, and close with `gc.outcome=fail`. A build whose
+approved work is not on the remote is never closed `pass`.
 
 For build-basic, a finalized result can be an approved source anchor/worktree.
 Do not mark publish failed or downgrade the workflow merely because the launcher

@@ -28,6 +28,14 @@ is explicit.
 
 Contract: `gc.work_dir` is the launcher rig root, not the implementation worktree.
 
+Commit every fix before closing. After the proof commands pass, in each
+worktree you edited run `git add -A` and
+`git commit -m "review fixes: <what changed>"`, then confirm
+`git status --porcelain` prints nothing there. Never amend an implementation
+commit and never push from this step. A fix left uncommitted is lost to the
+publish step, which publishes commits, so a pass with a dirty worktree is not
+`code_review.verdict=done`.
+
 Set `code_review.verdict=done` only when acceptance, test evidence, and
 simplicity all approve after this pass. Set `code_review.verdict=iterate` when
 required fixes remain.

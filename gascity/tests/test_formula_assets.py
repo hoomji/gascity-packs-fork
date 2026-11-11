@@ -2171,6 +2171,45 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(asset="publish", fragment=fragment):
                 self.assertIn(fragment, publish_text)
+        # ci-0m1g: with push/open_pr the publish step publishes unattended, commits and
+        # assembles every task worktree, and a failed publish never closes pass.
+        for fragment in (
+            "push `{{push}}` or open_pr `{{open_pr}}`",
+            'Never wait for, ask for, or record a human "approve publish"',
+            "this prompt is the publish procedure",
+            "commit what the build left uncommitted",
+            "assemble them onto ONE publish",
+            "git cherry-pick <base>..<task-branch>",
+            "git ls-remote origin <branch>",
+            "gc.publish_outcome=failed",
+            "is never closed `pass`",
+        ):
+            with self.subTest(asset="publish-unattended", fragment=fragment):
+                self.assertIn(fragment, publish_text)
+        self.assertNotIn("existing publish helper", publish_text)
+        for fragment in (
+            "push `{{push}}` and open_pr `{{open_pr}}`",
+            'never write "approve publish"',
+        ):
+            with self.subTest(asset="finalize-unattended", fragment=fragment):
+                self.assertIn(fragment, finalize_text)
+        decompose_text = (root / "assets/workflows/build-basic/decompose.md").read_text(encoding="utf-8")
+        for fragment in (
+            "Every work item must end in a commit",
+            "is never its own work item",
+        ):
+            with self.subTest(asset="decompose-no-zero-commit-item", fragment=fragment):
+                self.assertIn(fragment, decompose_text)
+        review_fix_text = (
+            root / "assets/workflows/build-basic-review/{target}.apply-review-findings.md"
+        ).read_text(encoding="utf-8")
+        for fragment in (
+            "Commit every fix before closing",
+            "`git status --porcelain` prints nothing",
+            "never push from this step",
+        ):
+            with self.subTest(asset="review-fix-commits", fragment=fragment):
+                self.assertIn(fragment, review_fix_text)
         for fragment in (
             "canonical build implementation summary",
             "`gc.build.implementation_summary_path`",

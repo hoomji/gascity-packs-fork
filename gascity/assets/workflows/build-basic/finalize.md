@@ -93,6 +93,11 @@ In those sections, include:
 - publish outcome
 - next human action
 
+push `{{push}}` and open_pr `{{open_pr}}` are the caller's publish authorization.
+When either is `true`, the publish step that follows pushes and opens the PR
+without a person: never write "approve publish", or any other publish approval,
+as the next human action. Name the PR review instead.
+
 Record the final report path on the workflow root bead as both
 `gc.build.final_report_path=<path>` and `gc.build.factory_run_path=<path>`.
 Use `gc bd update "<workflow-root-id>" --set-metadata "gc.build.final_report_path=<absolute path>" --set-metadata "gc.build.factory_run_path=<absolute path>"`.
