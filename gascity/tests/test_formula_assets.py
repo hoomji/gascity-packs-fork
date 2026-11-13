@@ -7617,5 +7617,17 @@ class PublishBaseRuleTests(unittest.TestCase):
                 self.assertIn("Never fail the publish, rebase, or re-verify only because the base has newer commits", text)
 
 
+
+class DecomposeWorkItemClassTests(unittest.TestCase):
+    """ci-bxx07ve: on a split-store city a work item carrying gc.root_bead_id is graph class, and
+    gc bd create refuses it, so build-basic roots gcg-161793, gcg-183297 and gcg-184321 failed."""
+
+    def test_decompose_never_stamps_graph_metadata_on_work_items(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        text = (root / "assets/workflows/build-basic/decompose.md").read_text()
+        self.assertNotIn("gc.root_bead_id=<workflow-root-id>", text)
+        self.assertIn("build.workflow_root=<workflow-root-id>", text)
+        self.assertIn("Never put `gc.*`", text)
+
 if __name__ == "__main__":
     unittest.main()
