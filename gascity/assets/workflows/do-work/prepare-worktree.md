@@ -4,7 +4,8 @@ setup only. Do not edit source files in the launcher checkout.
 
 **This step writes exactly three beads, all named below:** `gc.source_anchor_id` on the
 do-work root (step 2), `work_dir` on the source anchor (step 5), and the close of your own
-claimed step bead. These two named writes are this step's required lifecycle output: every
+claimed step bead. When this item runs inside a build's drain it may write a fourth, named in
+step 1b: `gc.input_convoy_id` on the parent build root. These two named writes are this step's required lifecycle output: every
 later step reads them, and without them implement and close-source-anchor fail
 `worktree_unavailable`.
 So nothing here conflicts with "update or close only your claimed bead": follow every step
@@ -14,6 +15,20 @@ below. Write no other bead.
    missing. Read that do-work root with `gc bd show <root-bead-id> --json`. If
    `gc bd show --json` returns a one-element list, unwrap the first element before
    reading metadata.
+1b. **Restore the parent's launch convoy (ci-p15n).** A build that decomposes points its workflow
+   root's `gc.input_convoy_id` at the implementation convoy so the drain can read its members. Once
+   the drain has saved its manifest it no longer reads that key, but `gc hook --claim` does: when
+   every member of that convoy is closed it retires the whole workflow, so the summary, review and
+   publish steps after the drain close `skipped` ("input convoy work already terminal"). Put the
+   parent back on its launch convoy now, while this item is still open:
+   - Read `gc.drain_control_id` from this item's workflow root. If it is missing, skip this block.
+   - Read that drain step bead (`gc bd show <drain-control-id> --json`, unwrap a one-element list)
+     and take its `gc.root_bead_id`: that is the parent root. Read the parent root.
+   - Only when the parent has a non-empty `gc.var.convoy_id`, and its `gc.input_convoy_id` equals
+     its `gc.build.implementation_convoy_id` and differs from `gc.var.convoy_id`, run
+     `gc bd update <parent-root-id> --set-metadata gc.input_convoy_id=<parent gc.var.convoy_id>`.
+     In every other case write nothing. A second item finds the key already restored and writes
+     nothing.
 2. Resolve `<source-anchor-id>` from the do-work root:
    - read root metadata `gc.input_convoy_id`; hard-fail if it is missing
    - verify `gc.input_convoy_id` matches rendered runtime convoy `{{convoy_id}}`

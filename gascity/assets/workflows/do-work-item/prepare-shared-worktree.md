@@ -1,7 +1,8 @@
 Prepare the authoritative worktree for one shared-drain item.
 
 This step writes named beads besides its claimed step: the workflow root
-(`gc.work_dir`, `gc.shared_work_base_branch`); nothing here conflicts with "update or close only your claimed bead".
+(`gc.work_dir`, `gc.shared_work_base_branch`) and, inside a build's drain, the parent build
+root's `gc.input_convoy_id` (below); nothing here conflicts with "update or close only your claimed bead".
 
 This is infrastructure setup only. Read the claimed step's `gc.root_bead_id`,
 read that workflow root bead, and require `gc.drain_member_id`, `gc.drain_index`,
@@ -18,6 +19,21 @@ your own working directory is the launcher rig repository root — `pwd -P` must
 equal the toplevel of the git checkout you are in — then set it with
 `gc bd update <root-bead-id> --set-metadata gc.work_dir=<absolute rig root>`.
 Record only a directory you verified this way; never a guess.
+
+**Restore the parent's launch convoy (ci-p15n).** A build that decomposes points its workflow
+root's `gc.input_convoy_id` at the implementation convoy so the drain can read its members. Once
+the drain has saved its manifest it no longer reads that key, but `gc hook --claim` does: when
+every member of that convoy is closed it retires the whole workflow, so the summary, review and
+publish steps after the drain close `skipped` ("input convoy work already terminal"). Put the
+parent back on its launch convoy now, while this item is still open:
+- Read `gc.drain_control_id` from this item's workflow root. If it is missing, skip this block.
+- Read that drain step bead (`gc bd show <drain-control-id> --json`, unwrap a one-element list)
+  and take its `gc.root_bead_id`: that is the parent root. Read the parent root.
+- Only when the parent has a non-empty `gc.var.convoy_id`, and its `gc.input_convoy_id` equals
+  its `gc.build.implementation_convoy_id` and differs from `gc.var.convoy_id`, run
+  `gc bd update <parent-root-id> --set-metadata gc.input_convoy_id=<parent gc.var.convoy_id>`.
+  In every other case write nothing. A second item finds the key already restored and writes
+  nothing.
 
 The base branch is base_branch `{{base_branch}}`. When it is non-empty and the
 workflow root has no `gc.shared_work_base_branch`, set it with

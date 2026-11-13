@@ -7617,5 +7617,33 @@ class PublishBaseRuleTests(unittest.TestCase):
                 self.assertIn("Never fail the publish, rebase, or re-verify only because the base has newer commits", text)
 
 
+
+class DecomposeWorkItemClassTests(unittest.TestCase):
+    """ci-bxx07ve: on a split-store city a work item carrying gc.root_bead_id is graph class, and
+    gc bd create refuses it, so build-basic roots gcg-161793, gcg-183297 and gcg-184321 failed."""
+
+    def test_decompose_never_stamps_graph_metadata_on_work_items(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        text = (root / "assets/workflows/build-basic/decompose.md").read_text()
+        self.assertNotIn("gc.root_bead_id=<workflow-root-id>", text)
+        self.assertIn("build.workflow_root=<workflow-root-id>", text)
+        self.assertIn("Never put `gc.*`", text)
+
+
+class DrainTailConvoyRestoreTests(unittest.TestCase):
+    """ci-p15n: stock upstream gc hook --claim retires a build whose root's gc.input_convoy_id
+    (re-pointed at the implementation convoy by decompose) has every member closed, so the tail
+    after the drain closes skipped (root gcg-128001). Both item prompts restore the launch convoy."""
+
+    def test_item_prompts_restore_parent_launch_convoy(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for rel in ("assets/workflows/do-work/prepare-worktree.md",
+                    "assets/workflows/do-work-item/prepare-shared-worktree.md"):
+            with self.subTest(rel=rel):
+                text = " ".join((root / rel).read_text().split())
+                self.assertIn("Restore the parent's launch convoy (ci-p15n)", text)
+                self.assertIn("gc bd update <parent-root-id> --set-metadata gc.input_convoy_id=<parent gc.var.convoy_id>", text)
+                self.assertIn("equals its `gc.build.implementation_convoy_id` and differs from `gc.var.convoy_id`", text)
+
 if __name__ == "__main__":
     unittest.main()
