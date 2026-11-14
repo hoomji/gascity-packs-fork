@@ -41,6 +41,34 @@ coverage matrix described here, and these sections:
 - Verification
 - Remaining Risks
 
+**Source failure notice fallback (gp-7zif9).** The summarize-implementation
+stage writes one comment on each original source bead when every
+implementation item failed or none was created. That stage can itself fail
+(its validator budget runs out, or its agent stops before the comment), so
+this step re-checks it before writing the final report, while the workflow
+root is still open:
+
+- Classify the build the same way: zero items created (no
+  `gc.build.implementation_convoy_id`, an empty implementation convoy, no rows
+  in the drain step's `gc.drain_manifest.v1`, or a drain closed
+  `gc.failure_reason=predecessor_failed`), or all items failed (one or more
+  manifest rows and none with `outcome` `pass`; a closed item is not a
+  success). If any item passed, write no notice.
+- Resolve the original source beads from the members of the root's launch
+  convoy `gc.var.convoy_id` (`gc convoy status <launch-convoy-id> --json`,
+  `.children`), never from the implementation convoy.
+- For each source, read `gc bd comments <source-id> --json`. If a comment
+  contains `gc-build-failure-notice:<workflow-root-id>`, write nothing.
+  Otherwise add one with `gc bd comments add <source-id> -f <notice-file>`,
+  first line the marker `gc-build-failure-notice:<workflow-root-id>`, then the
+  workflow root id, the result class, the failed step bead id, title and
+  reason, the artifact path, the canonical implementation summary path and
+  `Source left open and not delivered.`
+- Leave the source open and undelivered: never close it, never set delivery
+  metadata or labels on it. Use a status other than `approved` for the final
+  report, and name the notice marker under Remaining Risks and as the next
+  human action's starting point.
+
 Record the canonical path on the workflow root bead before validating or
 writing the final report. Use
 `gc bd update "<workflow-root-id>" --set-metadata "gc.build.implementation_summary_path=<absolute path>"`.

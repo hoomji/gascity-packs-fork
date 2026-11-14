@@ -53,10 +53,38 @@ Create work-item beads first, then create a new implementation convoy for those
 work units. Do not reuse the source or launch convoy from `gc.var.convoy_id`.
 
 Every work item must end in a commit: the implementation lane closes an item
-only when its worktree holds a commit past the base, and an item that fails
-blocks every item that depends on it. A plan step that changes no file
-(reproduce a baseline, verify, gather PR evidence) is never its own work item;
+only when its worktree holds a commit past the base. A plan step that changes
+no file (reproduce a baseline, verify, gather PR evidence) is never its own work item;
 fold it into the first item it serves as an acceptance check.
+
+**Separate drain: no `blocks` edges between work items (gp-7zif9).** When the
+workflow root's `gc.var.drain_policy` is `separate` (the default), the drain
+starts every item root at once. It holds a dependent item only until its
+blocker's item workflow closes, pass or fail, not until the blocker itself
+closes. When the blocker's item fails, the dependent is released with its
+blocker still open: worktree preparation fails `dependency_open`, implement
+then fails `missing_worktree`, and workflow cleanup force-closes the items
+while the source stays open (gl-8ecj9p). So, for a separate drain:
+
+- Never create a `blocks` edge between two work items of this implementation
+  convoy. Do not run `gc bd dep add` or `gc bd dep <id> --blocks <id>` between
+  them, and do not pass `--deps` naming another work item of this build to
+  `gc bd create`.
+- Fold work that must follow other work in this build into ONE work item. Its
+  description lists the tasks as a numbered list in execution order (the
+  evidence first, then the fix) and says that the item runs them in that
+  order. Never split ordered tasks across items and never encode their order
+  as bead edges.
+- Independent tasks, where neither needs the other's result, may stay
+  separate work items, with no edge between them.
+- Before creating the convoy, read each new work item with
+  `gc bd show <work-item-id> --json` (unwrap a one-element list). No entry in
+  its `dependencies` may name another new work item with
+  `dependency_type=blocks`. If one does, remove it with
+  `gc bd dep remove <work-item-id> <other-work-item-id>` and fold the two
+  items into one ordered item instead.
+- In the decomposition artifact's Implementation Convoy section, state
+  `Dependency edges among members: none.`
 
 Use the convoy creation flow exactly:
 

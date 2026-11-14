@@ -72,6 +72,71 @@ per-item summary paths, changed files, first verification commands, final proof
 commands, observed pass/fail results, and remaining risks. Keep the root
 summary concise, but do not omit accepted requirement IDs.
 
+**Source failure notice (gp-7zif9).** This stage runs once the drain has
+closed, whether the drain passed or failed, and before `workflow-finalize`
+retires the workflow root. It is therefore the pack's notice point for a build
+that delivered nothing: a build whose items all failed, or that created no
+item, must not leave its source silently open. Besides the root metadata and
+your claimed step, this step makes one more named write: at most one comment
+on each original source bead. Decide the build's result class first:
+
+1. Find the implementation drain step: the closed step bead of this workflow
+   root whose `gc.step_id` ends in `.implement` or `.implement-same-session`
+   (read it with `gc bd show <drain-step-id> --json`, unwrapping a one-element
+   list). Its `gc.drain_manifest.v1` rows list each item's `member_id`,
+   `item_root_id`, `status`, `outcome` and `failure_reason`.
+2. **Zero items created:** the root has no `gc.build.implementation_convoy_id`,
+   that convoy has no members, the manifest has no rows, or the drain closed
+   with `gc.failure_reason=predecessor_failed`. The failed step is the drain's
+   `gc.failure_subject` when set (normally the decompose step), otherwise the
+   decompose step bead of this root. The artifact path is
+   `gc.build.decomposition_path` (fallback `gc.var.decomposition_path`), or the
+   plan path when decomposition never wrote one. This case needs no item and
+   no convoy.
+3. **All items failed:** the manifest has one or more rows and no row has
+   `outcome` `pass`. A closed item root or a closed source anchor is not a
+   success: workflow cleanup force-closes failed items, so only a row whose
+   `outcome` is `pass` counts. For each failed row, the failed step is the
+   first step bead under its `item_root_id` that closed `gc.outcome=fail`
+   (its id, title and `gc.failure_class` or close reason). The artifact path is
+   the item's per-item summary path or the source anchor's `work_dir`, and the
+   canonical summary path written above.
+4. **Any item passed:** write no source notice.
+
+In either failure case, resolve the original source from the workflow root's
+launch convoy `gc.var.convoy_id`: its members
+(`gc convoy status <launch-convoy-id> --json`, `.children`) are the original
+source beads. Never use the members of `gc.build.implementation_convoy_id`;
+those are the build's own work items. Do not read the source from
+`gc.input_convoy_id`, which decompose may have pointed at the implementation
+convoy. If `gc.var.convoy_id` is empty, write no comment and record
+`no original source resolved` under Remaining Risks.
+
+For each original source bead, write the notice at most once per workflow:
+
+- Read its comments first: `gc bd comments <source-id> --json`. If any comment
+  text contains the marker `gc-build-failure-notice:<workflow-root-id>`, write
+  nothing: a retry of this step or the finalize step already wrote it.
+- Otherwise put the notice in a file and add it with
+  `gc bd comments add <source-id> -f <notice-file>`. Its first line is the
+  marker `gc-build-failure-notice:<workflow-root-id>`; then name the workflow
+  root id, the result class (`all <N> implementation items failed` or
+  `no implementation item was created`), the failed step bead id, title and
+  failure class or reason, the artifact path, the canonical implementation
+  summary path, and the line `Source left open and not delivered.`
+- Leave the source open and undelivered: never close it, never set
+  `gc.outcome` or any delivery metadata or label on it, and never mark it
+  delivered. Workflow finalize leaves the source open on a failed root, and
+  this step must not change that.
+- Set this summary's `status` to `blocked`, not `approved`, and name the
+  comment marker (written, or already present) under Remaining Risks.
+
+The comment on the source is the durable record: it stays readable after the
+root closes or is purged. The read-then-write check is not atomic, because
+`gc bd comments add` has no conditional form. It removes duplicates across
+sequential retries of this step and the finalize fallback, but two writers
+running at the same moment on the same root could each add one.
+
 Before closing this step, read the launcher rig root from the workflow root bead's `gc.work_dir` (when the root has none, use `$GC_RIG_ROOT`, which every rig agent session exports; never fail for a missing root `gc.work_dir` alone), then run the same validator locally from that launcher rig root. The validator is the script recorded as `gc.check_path` on the validation loop control bead (the dependent of this step bead whose `gc.kind` is `ralph`); Gas City resolves it to this pack's own `build-artifact-valid.sh` asset, so nothing has to be copied into the rig:
 
 `GC_BEAD_ID=<claimed-step-id> GC_RIG_ROOT=<launcher-rig-root> "<gc.check_path>"`
