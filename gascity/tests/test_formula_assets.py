@@ -2168,6 +2168,10 @@ class FormulaAssetTests(unittest.TestCase):
             "--set-metadata 'gc.outcome=pass'",
             "--set-metadata 'gc.publish_outcome=noop'",
             "--set-metadata 'gc.publish_mode=disabled'",
+            # The step's Formula Variables block lists only build-basic's own vars; push/open_pr/base_branch
+            # come from build-base, so the publisher reads them from the root (2026-11-14: gcg-810020 failed).
+            "`gc.var.push`, `gc.var.open_pr`, `gc.var.base_branch`",
+            "Never fail the publish because the\nblock omitted these values.",
         ):
             with self.subTest(asset="publish", fragment=fragment):
                 self.assertIn(fragment, publish_text)
