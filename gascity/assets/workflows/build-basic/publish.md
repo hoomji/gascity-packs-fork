@@ -22,10 +22,19 @@ approval as the next action or because no publish script exists under
 Publish procedure when publishing is enabled:
 
 1. Read `gc.root_bead_id` from your claimed step bead, then the workflow root.
-   Read the implementation convoy id from root metadata `gc.input_convoy_id`,
-   its members from `gc convoy status <convoy-id> --json` `.children`, and each
-   member's `work_dir` metadata. Drop empties and dedupe: these are the
-   implementation worktrees. Hard-fail when there are none.
+   Resolve the implementation convoy id from the root: use
+   `gc.build.implementation_convoy_id` when it is present and non-empty, and
+   use `gc.input_convoy_id` only when that key is absent or empty (a separate
+   drain restores `gc.input_convoy_id` to the launch convoy, ci-p15n, so by
+   publish time it names the source bead's convoy, not the drain convoy).
+   Read the members from `gc convoy status <convoy-id> --json` `.children`,
+   and each member's `work_dir` metadata. Drop empties and dedupe: these are
+   the implementation worktrees. Hard-fail when there are none. When
+   `gc.build.implementation_convoy_id` is present, never fall through to
+   `gc.input_convoy_id` because its members lack `work_dir`. The failure text
+   in `gc.publish_error` names both values: `no implementation worktree
+   resolvable from gc.build.implementation_convoy_id <id|missing> /
+   gc.input_convoy_id <id|missing>`.
 2. In every worktree, commit what the build left uncommitted before anything
    else. Review-fix edits and fixer output are approved work, not a reason to
    stop:
