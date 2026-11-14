@@ -2037,6 +2037,58 @@ class FormulaAssetTests(unittest.TestCase):
             with self.subTest(step="decompose", fragment=fragment):
                 self.assertIn(fragment, decompose_description)
 
+    def test_build_basic_publish_steps_resolve_implementation_convoy_first(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflow = root / "assets" / "workflows" / "build-basic"
+        # A separate drain restores gc.input_convoy_id to the launch convoy
+        # (ci-p15n), so publish-time lookups must read the implementation
+        # convoy key first. Each case: file, lookup paragraph start and end
+        # markers (on whitespace-normalised text), and kept-contract fragments.
+        cases = (
+            (
+                "publish.md",
+                "1. Read `gc.root_bead_id`",
+                " 2. In every worktree",
+                ("gc.publish_outcome=failed",),
+            ),
+            (
+                "pre-publish-fixers.md",
+                " 2. Resolve the implementation convoy id",
+                " 3. Read each member",
+                (
+                    "Members are the source anchors",
+                    "Never treat the convoy itself",
+                    "gc.pre_publish_outcome=failed",
+                    "gc.pre_publish_error",
+                ),
+            ),
+        )
+        for name, start, end, kept in cases:
+            with self.subTest(file=name):
+                text = " ".join((workflow / name).read_text(encoding="utf-8").split())
+                self.assertIn(start, text)
+                self.assertIn(end, text)
+                begin = text.index(start)
+                paragraph = text[begin : text.index(end, begin)]
+                implementation_key = paragraph.find("gc.build.implementation_convoy_id")
+                launch_key = paragraph.find("gc.input_convoy_id")
+                self.assertGreaterEqual(implementation_key, 0, paragraph)
+                self.assertGreaterEqual(launch_key, 0, paragraph)
+                self.assertLess(implementation_key, launch_key, paragraph)
+                for fragment in (
+                    "present and non-empty",
+                    "absent or empty",
+                    "never fall through",
+                    "no implementation worktree resolvable from "
+                    "gc.build.implementation_convoy_id <id|missing> / "
+                    "gc.input_convoy_id <id|missing>",
+                ):
+                    with self.subTest(file=name, fragment=fragment):
+                        self.assertIn(fragment, paragraph)
+                for fragment in kept:
+                    with self.subTest(file=name, kept=fragment):
+                        self.assertIn(fragment, text)
+
     def test_build_basic_plan_review_resolves_blockers_or_fails(self) -> None:
         # gp-un7rq: a plan review that passed "with blockers captured" made
         # decompose refuse the plan on every attempt, and one that launched the
