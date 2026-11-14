@@ -3,6 +3,17 @@ Use the built-in Gas City publish flow.
 Publishing is enabled when push `{{push}}` or open_pr `{{open_pr}}` is `true`; you publish the finalized build-basic result yourself, with `git` and `gh`, in this step. If both are `false`, publishing is disabled: record a no-op publish outcome with the final artifact paths.
 
 `push=true` and `open_pr=true` are the caller's standing authorization to publish.
+
+Resolving the publish inputs: `push`, `open_pr` and `base_branch` are declared by
+build-base, and the step's "Formula Variables" block may not list them (it lists
+only the variables build-basic declares itself). When a value above is still a
+literal `{{...}}` placeholder or is missing from that block, read it from the
+workflow root's metadata (`gc.var.push`, `gc.var.open_pr`, `gc.var.base_branch`;
+the root is this bead's `gc.root_bead_id`):
+`gc bd show <root> --json | jq -r '.[0].metadata["gc.var.push"]'`. A missing key
+there means the build-base default (`false`). Never fail the publish because the
+block omitted these values. Read the final report and artifact paths the same
+way, from the root's `gc.build.*_path` and `gc.artifact_root` metadata.
 Never wait for, ask for, or record a human "approve publish" in any interaction
 mode, and never close this step unpublished because a final report lists a human
 approval as the next action or because no publish script exists under
