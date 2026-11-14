@@ -2037,6 +2037,51 @@ class FormulaAssetTests(unittest.TestCase):
             with self.subTest(step="decompose", fragment=fragment):
                 self.assertIn(fragment, decompose_description)
 
+    def test_build_basic_plan_review_resolves_blockers_or_fails(self) -> None:
+        # gp-un7rq: a plan review that passed "with blockers captured" made
+        # decompose refuse the plan on every attempt, and one that launched the
+        # design-review formula died for want of a convoy.
+        root = pathlib.Path(__file__).resolve().parents[1]
+        text = (root / "assets/workflows/build-basic/plan-review.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("capture the unresolved findings", text)
+        self.assertNotIn("Use the built-in Gas City `design-review` flow", text)
+        for fragment in (
+            "Review the plan yourself, inside this step",
+            "Do not launch the `design-review` formula",
+            "Resolve every blocker in the plan",
+            "`gc.outcome=pass` only when no blocker remains",
+            "gc.outcome=fail",
+            "gc.failure_class=hard",
+            "gc.failure_reason=",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
+    def test_build_basic_review_lanes_fail_hard_without_review_context(self) -> None:
+        # gp-un7rq: with no review context on the root, every lane answered
+        # "iterate" and the loop spent all six attempts on a fault no attempt
+        # can repair, because setup runs outside the loop. A hard-class member
+        # failure ends a check loop in one attempt (formula spec v2, check).
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflow_dir = root / "assets" / "workflows" / "build-basic-review"
+        for lane in ("acceptance-review", "test-evidence-review", "simplicity-review"):
+            text = (workflow_dir / f"{{target}}.{lane}.md").read_text(encoding="utf-8")
+            self.assertNotIn("write an iterate finding against review setup", text)
+            for fragment in (
+                "gc.outcome=fail",
+                "gc.failure_class=hard",
+                "gc.failure_reason=review setup",
+                "Do not close with an `iterate` verdict",
+            ):
+                with self.subTest(lane=lane, fragment=fragment):
+                    self.assertIn(fragment, text)
+        loop = (workflow_dir / "{target}.build-basic-review-loop.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("gc.failure_class=hard", loop)
+
     def test_build_basic_v2_uses_approachable_factory_techniques(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         review = load_formula(root, "build-basic-review")

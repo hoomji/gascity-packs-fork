@@ -19,9 +19,13 @@ the implementation worktree. Do not inspect or edit the launcher checkout when
 deciding whether the implementation passes. Resolve every relative source path
 and proof command from the review context against the listed implementation
 worktree, run `cd "$WORKTREE"`, and verify `pwd -P` equals that worktree before
-executing commands. If the context is missing a usable implementation worktree,
-write an iterate finding against review setup instead of reviewing the launcher
-checkout.
+executing commands.
+
+If the workflow root has no `gc.build.code_review_context_path`, or the context names no usable
+implementation worktree, review setup failed and no pass of this loop can repair it.
+Do not close with an `iterate` verdict. Set `gc.outcome=fail`, `gc.failure_class=hard` and
+`gc.failure_reason=review setup: <what is missing>` on the claimed bead with `gc bd update`,
+then close it with that reason; do not review the launcher checkout.
 
 Contract: `gc.work_dir` is the launcher rig root, not the implementation worktree.
 
