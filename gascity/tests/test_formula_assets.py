@@ -263,9 +263,11 @@ ROOT_IMPLEMENTATION_SUMMARY_GATE = (
     "gc.build.implementation-summary.v1",
     "gc.build.implementation_summary_path",
 )
+# An item summary never lists the canonical root key: the item gate must not be
+# able to validate, or be told to write, the file summarize-implementation owns.
 ITEM_SUMMARY_GATE = (
     "gc.build.implementation-summary.v1",
-    "gc.implementation.summary_path,gc.build.implementation_summary_path,gc.var.summary_path",
+    "gc.implementation.summary_path,gc.var.summary_path",
 )
 AGGREGATE_SUMMARY_GATE = (
     "gc.build.implementation-summary.v1",

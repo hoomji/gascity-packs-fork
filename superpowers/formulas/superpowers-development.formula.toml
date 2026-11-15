@@ -20,7 +20,7 @@ default = "superpowers.implementer"
 id = "implement"
 title = "Inspect Superpowers implementation task"
 needs = ["prepare-worktree"]
-metadata = { "gc.run_target" = "{{implementation_target}}", "gc.continuation_group" = "superpowers-task-{{issue}}", "gc.build.artifact_schema" = "gc.build.implementation-summary.v1", "gc.build.artifact_path_keys" = "gc.implementation.summary_path,gc.build.implementation_summary_path,gc.var.summary_path" }
+metadata = { "gc.run_target" = "{{implementation_target}}", "gc.continuation_group" = "superpowers-task-{{issue}}", "gc.build.artifact_schema" = "gc.build.implementation-summary.v1", "gc.build.artifact_path_keys" = "gc.implementation.summary_path,gc.var.summary_path" }
 description_file = "../assets/workflows/superpowers-development/implement.md"
 
 [steps.check]
