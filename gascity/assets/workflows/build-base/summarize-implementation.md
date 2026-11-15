@@ -21,12 +21,31 @@ object.
 
 Collect the closed implementation source anchors and drain child workflows from
 the implementation convoy. Read their recorded implementation summary paths
-from `gc.implementation.summary_path`, `gc.build.implementation_summary_path`,
-or `gc.var.summary_path`. Include those summaries as upstream evidence. If an
+from `gc.implementation.summary_path`, then `gc.var.summary_path`. Include those summaries as upstream evidence. If an
 item summary is missing coverage IDs that appear in the requirements artifact,
 read the requirements, decomposition, review context, and verification evidence
 before writing the canonical root summary. The canonical summary must cover all
 accepted requirement IDs that the build finalized.
+
+**Occupied canonical path.** Item workers write their summaries under
+`items/<member_id>/` and never at `gc.build.implementation_summary_path`, so the
+canonical path is normally free. Before writing, check whether a file already
+sits there (a run from before that rule, or an earlier attempt of this step) and
+read its front matter. Settle it by rule, never by overwriting blind:
+
+1. `gc.attempt` greater than 1: the file is your own earlier attempt. Take the
+   repair-in-place branch below without further checks.
+2. `producer.stage` is `implement` or `implement-item`: it is an item summary
+   that landed on the canonical path. Compute its `sha256:` hash and copy it to
+   `<same directory>/items/legacy-<hash8>/implementation-summary.md` first
+   (`<hash8>` is the first eight hex digits of the digest), then list the copy's
+   path with that hash in `trace.upstream` and replace the canonical file with
+   the root summary. The item evidence survives at the copy.
+3. `producer.stage` is `summarize-implementation`: it is an earlier attempt of
+   this step: repair it in place, keeping its path.
+4. Anything else, or front matter you cannot read: do not touch the file. Set
+   `gc.outcome=fail` and `gc.failure_reason=canonical_summary_path_occupied: <path> producer=<producer.formula/producer.stage or unreadable>`,
+   then close the step. Item evidence is never lost silently.
 
 Write the artifact as Markdown with YAML front matter, not JSON. Use mapping objects for front matter; do not use scalar shortcuts such as
 `workflow: build-basic`. The top-level YAML shape must be:
