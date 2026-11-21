@@ -5219,6 +5219,7 @@ description = "Override sink that writes the base triage report contract."
                 "pr-comment-posted.sh",
                 "pr-review-report-valid.sh",
                 "prepare-shared-worktree.sh",
+                "review-context-recorded.sh",
             ],
         )
         for script in scripts:
@@ -5269,6 +5270,7 @@ description = "Override sink that writes the base triage report contract."
                 "prepare-shared-worktree.sh",
                 "pr-comment-posted.sh",
                 "pr-review-report-valid.sh",
+                "review-context-recorded.sh",
             },
         )
 
