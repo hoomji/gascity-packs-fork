@@ -51,3 +51,8 @@ delegation mechanism.
 
 Close this setup bead with `gc.outcome=pass` only after the review context path
 is recorded.
+
+Record it with `gc bd update <root> --set-metadata gc.build.code_review_context_path=<absolute path>`
+(the root is this bead's `gc.root_bead_id`), then read the root back and confirm
+the key is there. A check runs after this step closes and fails the attempt when
+the root does not name an existing context file.
