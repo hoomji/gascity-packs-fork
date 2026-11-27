@@ -62,6 +62,20 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# A session that has drain-acked is leaving: never claim for it again. The
+# hook's own claim fence reads the session row, which turns draining only when
+# the controller acts, while drain-ack sets GC_DRAIN_ACK on the tmux session at
+# once. In that gap a nudge can make the agent claim again, and the controller
+# then stops the session holding the new bead
+# (session.drain_acked_with_assigned_work). gc clears the variable on wake and
+# on `gc runtime undrain`. No tmux, or a read that fails: claim as before.
+if drain_env="$(timeout 10 tmux show-environment GC_DRAIN_ACK 2>/dev/null)" \
+    && [ "$drain_env" = "GC_DRAIN_ACK=1" ]; then
+    echo "DRAIN_ALREADY_ACKED this session is stopping; claim nothing more" >&2
+    printf '%s\n' '{"action":"drain","reason":"drain_already_acked"}'
+    exit 0
+fi
+
 json_pick() {
     python3 -c '
 import json
