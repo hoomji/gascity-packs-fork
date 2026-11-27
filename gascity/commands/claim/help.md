@@ -19,3 +19,8 @@ Hook and bead-read failures are retried at most three times. Because a failed
 hook may already have assigned work, terminal hook or verification failures
 return non-zero without mutating claims or acknowledging drain. Configuration
 failures detected before the hook still drain-ack before returning non-zero.
+
+A session that already acknowledged drain claims nothing more: when
+`tmux show-environment GC_DRAIN_ACK` reads `GC_DRAIN_ACK=1`, the command
+returns `{"action":"drain","reason":"drain_already_acked"}` without calling the
+hook. Outside tmux, or when that read fails, it claims as usual.

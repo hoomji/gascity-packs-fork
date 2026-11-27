@@ -989,6 +989,78 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"action": "drain"})
 
+    def _run_claim_with_fake_tmux(self, tmux_script: str) -> tuple[subprocess.CompletedProcess, str]:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        command = root / "commands" / "claim" / "run.sh"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            calls = tmp_path / "gc-calls"
+            fake_gc = bin_dir / "gc"
+            fake_gc.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >>'{calls}'\n"
+                "if [ \"$1\" = hook ] && [ \"$2\" = --claim ]; then\n"
+                "  printf '%s\\n' '{\"action\":\"work\",\"bead_id\":\"bd-9\",\"assignee\":\"worker\"}'\n"
+                "elif [ \"$1\" = bd ] && [ \"$2\" = show ]; then\n"
+                "  printf '%s\\n' '{\"id\":\"bd-9\",\"status\":\"in_progress\",\"assignee\":\"worker\",\"metadata\":{}}'\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            fake_gc.chmod(0o755)
+            fake_tmux = bin_dir / "tmux"
+            fake_tmux.write_text("#!/bin/sh\n" + tmux_script, encoding="utf-8")
+            fake_tmux.chmod(0o755)
+            env = {
+                **os.environ,
+                "BEADS_ACTOR": "worker",
+                "GC_TEMPLATE": "",
+                "GC_AGENT": "",
+                "GC_PACK_DIR": str(root),
+                "GC_PACK_NAME": "gc",
+                "PATH": f"{bin_dir}:/usr/bin:/bin",
+            }
+            result = subprocess.run([str(command)], capture_output=True, env=env, text=True)
+            gc_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+        return result, gc_calls
+
+    def test_city_claim_command_claims_nothing_after_a_drain_ack(self) -> None:
+        # Between `gc runtime drain-ack` and the controller stopping the session
+        # the hook's claim fence still answers work; the tmux session variable is
+        # the only signal that is already set.
+        result, gc_calls = self._run_claim_with_fake_tmux(
+            "if [ \"$1\" = show-environment ] && [ \"$2\" = GC_DRAIN_ACK ]; then\n"
+            "  echo GC_DRAIN_ACK=1\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 1\n"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"action": "drain", "reason": "drain_already_acked"},
+        )
+        self.assertIn("DRAIN_ALREADY_ACKED", result.stderr)
+        self.assertEqual(gc_calls, "")
+
+    def test_city_claim_command_claims_when_the_drain_read_fails_or_is_unset(self) -> None:
+        for tmux_script in (
+            "echo 'no server running' >&2\nexit 1\n",
+            "echo '-GC_DRAIN_ACK'\nexit 0\n",
+            "echo GC_DRAIN_ACK=0\nexit 0\n",
+        ):
+            with self.subTest(tmux=tmux_script):
+                result, gc_calls = self._run_claim_with_fake_tmux(tmux_script)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["action"], "work")
+                self.assertEqual(json.loads(result.stdout)["bead_id"], "bd-9")
+                self.assertIn("hook --claim --drain-ack --json", gc_calls)
+
     def test_city_claim_command_declares_authoritative_convoy_source_on_explicit_run(
         self,
     ) -> None:
